@@ -15,7 +15,7 @@ export const PRESET_LESSONS: Lesson[] = [
         id: 'ce-1',
         title: '1. Estructura Formal de la Constitución',
         speech:
-          '¡Bienvenidos a la pizarra de preparación! Todo opositor debe dominar los números exactos de la Constitución Española de 1978 porque caen en los exámenes tipo test. Vamos a desglosar su estructura en la pizarra.',
+          '¡Hola a todos, futuros funcionarios! Arrancamos la clase de hoy con la estructura formal de la Constitución Española de 1978. Vamos a dibujar el esquema completo en la pizarra blanca. Fijaos bien: la Constitución consta de un Preámbulo y 169 artículos, organizados en un Título Preliminar y 10 Títulos numerados. En el recuadro azul tenéis el cuerpo central. Ojo al detalle del Preámbulo: no está articulado ni tiene fuerza jurídica vinculante. Ahora mirad a la derecha: la regla mnemotécnica de las disposiciones es 4, 9, 1, 1. Cuatro adicionales, nueve transitorias, una derogatoria y una final. Aprendéosla de memoria porque en las oposiciones siempre intentan cambiar estos números para confundiros.',
         writingFocusCoord: [280, 70],
         commands: [
           { id: 'c1', type: 'clear' },
@@ -139,7 +139,7 @@ export const PRESET_LESSONS: Lesson[] = [
         id: 'ce-2',
         title: '2. Trampa de Examen: Reforma Ordinaria (167) vs Agravada (168)',
         speech:
-          'Pasemos al punto que más suspensos causa en las oposiciones: el Título X de la reforma constitucional. Vamos a comparar lado a lado el procedimiento ordinario del 167 y el procedimiento agravado del 168.',
+          'Continuamos con el segundo bloque: la reforma constitucional, donde caen la mitad de los opositores. Vamos a trazar una comparativa lado a lado en la pizarra. A la izquierda tenemos el artículo 167, que es el procedimiento ordinario. Requiere mayoría de tres quintos en el Congreso y en el Senado. Y atención a esto: el referéndum aquí es facultativo; solo se celebra si lo solicita la décima parte de los miembros de cualquier Cámara. En cambio, a la derecha tenéis el artículo 168, el procedimiento agravado. Se aplica si se pretende revisar toda la Constitución, o reformar el Título Preliminar, los Derechos Fundamentales de los artículos 15 al 29, o la Corona. Aquí la mayoría inicial es de dos tercios, se disuelven inmediatamente las Cortes, las nuevas Cortes deben ratificar la decisión y volver a aprobar el texto por dos tercios, y el referéndum es OBLIGATORIO en todo caso.',
         writingFocusCoord: [500, 420],
         commands: [
           {
