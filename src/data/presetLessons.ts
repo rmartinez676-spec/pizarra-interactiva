@@ -1,0 +1,633 @@
+import type { Lesson } from '../types';
+
+export const PRESET_LESSONS: Lesson[] = [
+  {
+    id: 'tiro-parabolico',
+    title: 'Tiro Parabólico vs Caída Libre: ¿Cuál cae antes?',
+    topic: 'Física Clásica: Cinemática 2D',
+    category: 'Física',
+    mode: 'topic',
+    teacherId: 'tomas',
+    description:
+      'Si dejamos caer una bola verticalmente y lanzamos otra horizontalmente con fuerza desde la misma altura... ¿cuál toca el suelo primero?',
+    steps: [
+      {
+        id: 'tp-1',
+        title: 'El Gran Enigma',
+        speech:
+          '¡Bienvenidos a la pizarra! Imagina dos esferas idénticas al borde de una mesa a la misma altura h. La bola A se deja caer en reposo. La bola B es disparada horizontalmente a gran velocidad. ¿Cuál llegará antes al suelo?',
+        writingFocusCoord: [450, 80],
+        commands: [
+          { id: 'c1', type: 'clear' },
+          {
+            id: 'c2',
+            type: 'title',
+            text: 'Tiro Parabólico vs Caída Libre',
+            subtitle: 'Independencia de los movimientos (Galileo)',
+            x: 50,
+            y: 40,
+            color: '#fef08a',
+          },
+          {
+            id: 'c3',
+            type: 'diagram',
+            kind: 'projectile',
+            x: 60,
+            y: 110,
+            width: 480,
+            height: 240,
+          },
+          {
+            id: 'c4',
+            type: 'text',
+            text: 'Bola A: Caída libre (v_0 = 0)',
+            x: 580,
+            y: 130,
+            color: '#38bdf8',
+            style: 'bold',
+          },
+          {
+            id: 'c5',
+            type: 'text',
+            text: 'Bola B: Lanzada horizontalmente (v_{0x} > 0)',
+            x: 580,
+            y: 180,
+            color: '#f43f5e',
+            style: 'bold',
+          },
+        ],
+        socratic: {
+          prompt:
+            'A primera vista, ¿cuál de las dos bolas crees que toca el suelo primero?',
+          options: [
+            'La bola A (cae en línea recta más corta)',
+            'La bola B (la velocidad hacia adelante la sostiene)',
+            '¡Llegan exactamente al mismo tiempo!',
+          ],
+          correctIndex: 2,
+          hint: 'Piensa en qué fuerza actúa hacia abajo en el eje vertical sobre ambas bolas una vez que abandonan la mesa.',
+          feedbackCorrect:
+            '¡Exacto! Aunque nuestra intuición engañe al principio, tocan el suelo simultáneamente.',
+          feedbackRetry:
+            'Cuidado con la trampa común. Galileo descubrió que el movimiento horizontal y el vertical son totalmente independientes.',
+        },
+      },
+      {
+        id: 'tp-2',
+        title: 'Descomposición de Ejes',
+        speech:
+          'Observemos las fuerzas una vez que están en el aire. No hay nada empujando la bola B hacia adelante después de salir; viaja por inercia en el eje X. En el eje Y, ambas sienten únicamente la gravedad g.',
+        writingFocusCoord: [600, 260],
+        commands: [
+          {
+            id: 'c6',
+            type: 'box',
+            x: 560,
+            y: 110,
+            width: 380,
+            height: 260,
+            color: '#cbd5e1',
+            label: 'Ecuaciones de Movimiento',
+          },
+          {
+            id: 'c7',
+            type: 'math',
+            latex: 'y(t) = h - \\frac{1}{2} g t^2',
+            x: 590,
+            y: 170,
+            label: 'Eje Vertical (común a A y B)',
+            scale: 1.1,
+          },
+          {
+            id: 'c8',
+            type: 'math',
+            latex: 't_{\\text{suelo}} = \\sqrt{\\frac{2h}{g}}',
+            x: 590,
+            y: 260,
+            color: '#34d399',
+            scale: 1.2,
+          },
+          {
+            id: 'c9',
+            type: 'circle',
+            x: 740,
+            y: 290,
+            radiusX: 130,
+            radiusY: 45,
+            color: '#facc15',
+          },
+          {
+            id: 'c10',
+            type: 'arrow',
+            from: [530, 230],
+            to: [580, 270],
+            color: '#f59e0b',
+            label: '¡El tiempo no depende de vx!',
+          },
+        ],
+      },
+      {
+        id: 'tp-3',
+        title: 'Conclusión en la Pizarra',
+        speech:
+          'Fíjate bien en la fórmula recuadrada: la masa no aparece, y la velocidad horizontal v_x tampoco. Por tanto, lanzar más rápido hacia el lado solo hace que caiga más lejos, ¡pero tarda exactamente los mismos segundos!',
+        writingFocusCoord: [300, 410],
+        commands: [
+          {
+            id: 'c11',
+            type: 'box',
+            x: 60,
+            y: 380,
+            width: 880,
+            height: 100,
+            color: '#f59e0b',
+            fill: 'rgba(245, 158, 11, 0.08)',
+          },
+          {
+            id: 'c12',
+            type: 'text',
+            text: '💡 Ley de Galileo: El movimiento vertical y horizontal son ortogonales e independientes.',
+            x: 90,
+            y: 410,
+            size: 20,
+            color: '#fef08a',
+            style: 'hand',
+          },
+          {
+            id: 'c13',
+            type: 'text',
+            text: 'Mayor velocidad horizontal = llega más lejos, pero toca el suelo al mismo instante.',
+            x: 90,
+            y: 445,
+            size: 18,
+            color: '#e2e8f0',
+          },
+        ],
+      },
+    ],
+    flashcards: [
+      {
+        id: 'f1',
+        front: '¿De qué depende el tiempo de caída de un proyectil horizontal?',
+        back: 'Únicamente de la altura inicial h y de la aceleración de la gravedad g: t = √(2h/g).',
+      },
+      {
+        id: 'f2',
+        front: '¿La velocidad horizontal afecta al tiempo en que el objeto toca el suelo?',
+        back: 'No. El eje horizontal y el vertical son completamente independientes (principio de superposición).',
+      },
+      {
+        id: 'f3',
+        front: '¿Qué fuerza actúa en el eje X después de lanzar la pelota?',
+        back: 'Ninguna (despreciando la resistencia del aire). Continúa con velocidad constante por inercia.',
+      },
+    ],
+    quiz: [
+      {
+        id: 'q1',
+        question:
+          'Si duplicamos la velocidad de disparo horizontal de la bola B, ¿qué le ocurrirá a su tiempo de caída?',
+        options: [
+          'Se reducirá a la mitad',
+          'Permanecerá exactamente igual',
+          'Se duplicará',
+          'Dependerá de la masa de la bola',
+        ],
+        correctIndex: 1,
+        explanation:
+          'El tiempo vertical sigue gobernado por t = √(2h/g). La velocidad horizontal solo aumenta el alcance (x = v*t).',
+      },
+      {
+        id: 'q2',
+        question:
+          '¿Cuál de las siguientes magnitudes NO aparece en la ecuación del tiempo de caída libre vertical?',
+        options: [
+          'La altura h',
+          'La gravedad g',
+          'La masa del objeto m',
+          'Todas influyen',
+        ],
+        correctIndex: 2,
+        explanation:
+          'En el vacío o despreciando la fricción del aire, todos los cuerpos caen con la misma aceleración g, sin importar su masa.',
+      },
+    ],
+  },
+  {
+    id: 'secante-tangente-derivada',
+    title: 'Secante vs Tangente: ¿Misma pendiente significa misma recta?',
+    topic: 'Cálculo Diferencial',
+    category: 'Matemáticas',
+    mode: 'topic',
+    teacherId: 'tomas',
+    description:
+      'Para la parábola y = x², la secante entre (1,1) y (3,9) tiene pendiente 4. La tangente en x=2 también tiene pendiente 4. ¿Son la misma recta?',
+    steps: [
+      {
+        id: 'st-1',
+        title: 'Cálculo de la Secante',
+        speech:
+          'Tomemos la función elemental y = x². Queremos trazar la recta secante que une dos puntos de la curva: A(1, 1) y B(3, 9). Hallemos primero la pendiente clásica m.',
+        writingFocusCoord: [280, 180],
+        commands: [
+          { id: 'c1', type: 'clear' },
+          {
+            id: 'c2',
+            type: 'title',
+            text: 'Secante vs Tangente en y = x²',
+            subtitle: 'El paso sutil del promedio al cambio instantáneo',
+            x: 50,
+            y: 40,
+            color: '#93c5fd',
+          },
+          {
+            id: 'c3',
+            type: 'graph',
+            x: 500,
+            y: 100,
+            width: 440,
+            height: 320,
+            equations: [
+              { fnName: 'f', expression: 'x^2', color: '#f59e0b', label: 'y = x²' },
+              { fnName: 'sec', expression: '4*x - 3', color: '#38bdf8', label: 'Secante' },
+            ],
+            xRange: [-0.5, 4],
+            yRange: [-1, 11],
+            highlightPoints: [
+              { x: 1, y: 1, label: 'A(1,1)' },
+              { x: 3, y: 9, label: 'B(3,9)' },
+            ],
+          },
+          {
+            id: 'c4',
+            type: 'math',
+            latex: 'm_{\\text{sec}} = \\frac{\\Delta y}{\\Delta x} = \\frac{9 - 1}{3 - 1} = \\frac{8}{2} = 4',
+            x: 60,
+            y: 130,
+            scale: 1.15,
+          },
+          {
+            id: 'c5',
+            type: 'math',
+            latex: 'y - y_1 = m(x - x_1) \\implies y = 4x - 3',
+            x: 60,
+            y: 230,
+            color: '#38bdf8',
+            scale: 1.1,
+          },
+        ],
+        socratic: {
+          prompt:
+            'Ahora hallemos la derivada f\'(x) de x² en el punto medio x = 2. Como f\'(x) = 2x, en x=2 la pendiente tangente es 2(2) = 4. Ambas pendientes valen 4. ¿Significa eso que la recta secante y la tangente son idénticas?',
+          options: [
+            'Sí, porque tienen la misma pendiente m = 4',
+            'No, son paralelas pero pasan por ordenadas al origen distintas',
+            'Depende de si evaluamos en radianes o grados',
+          ],
+          correctIndex: 1,
+          hint: 'Recuerda que una recta queda definida por su pendiente y por el punto donde corta al eje Y (ordenada al origen).',
+          feedbackCorrect:
+            '¡Exacto! Misma pendiente significa paralelismo, pero la secante corta a la curva en dos puntos mientras que la tangente solo la roza en (2,4).',
+          feedbackRetry:
+            '¡Cuidado! Tener la misma pendiente solo significa que son paralelas. Fíjate en los puntos por donde pasa cada una.',
+        },
+      },
+      {
+        id: 'st-2',
+        title: 'Comparativa Lado a Lado',
+        speech:
+          'Escribamos ambas ecuaciones lado a lado. Para la tangente en (2, 4): y - 4 = 4(x - 2), lo que nos da y = 4x - 4. ¡Compara el término independiente!',
+        writingFocusCoord: [280, 360],
+        commands: [
+          {
+            id: 'c6',
+            type: 'math',
+            latex: 'm_{\\text{tan}} = \\left.\\frac{d}{dx}(x^2)\\right|_{x=2} = 2(2) = 4',
+            x: 60,
+            y: 310,
+            scale: 1.1,
+          },
+          {
+            id: 'c7',
+            type: 'math',
+            latex: 'y - 4 = 4(x - 2) \\implies y = 4x - 4',
+            x: 60,
+            y: 380,
+            color: '#f43f5e',
+            scale: 1.15,
+          },
+          {
+            id: 'c8',
+            type: 'box',
+            x: 50,
+            y: 440,
+            width: 410,
+            height: 60,
+            color: '#34d399',
+            label: 'Conclusión Visual',
+          },
+          {
+            id: 'c9',
+            type: 'text',
+            text: 'Secante: y = 4x - 3   vs   Tangente: y = 4x - 4 (Paralelas)',
+            x: 70,
+            y: 470,
+            size: 15,
+            color: '#fef08a',
+            style: 'bold',
+          },
+        ],
+      },
+    ],
+    flashcards: [
+      {
+        id: 'fc1',
+        front: '¿Qué representa geométricamente la pendiente de la secante?',
+        back: 'La tasa de cambio promedio entre dos puntos distintos de la función (Δy / Δx).',
+      },
+      {
+        id: 'fc2',
+        front: '¿Qué representa la pendiente de la recta tangente?',
+        back: 'La derivada f\'(a), que es la tasa de cambio instantánea en el punto exacto a.',
+      },
+    ],
+    quiz: [
+      {
+        id: 'qst1',
+        question:
+          'Si dos rectas tienen la misma pendiente m = 4 pero ordenadas al origen b1 = -3 y b2 = -4, ¿cómo son entre sí?',
+        options: ['Perpendiculares', 'Coincidentes', 'Paralelas', 'Secantes'],
+        correctIndex: 2,
+        explanation: 'Dos rectas con igual pendiente y distinto intercepto nunca se tocan: son estrictamente paralelas.',
+      },
+    ],
+  },
+  {
+    id: 'algebra-tarea-ecuacion',
+    title: 'Resolver 3(x - 2) = 2x + 5: El Paso Que Todos Tropiezan',
+    topic: 'Álgebra de Secundaria / Bachillerato',
+    category: 'Matemáticas',
+    mode: 'homework',
+    teacherId: 'tomas',
+    description:
+      '¿Atascado con los paréntesis y las x a ambos lados? Vamos a resolverlo con una pista a la vez para que lo hagas tú.',
+    steps: [
+      {
+        id: 'alg-1',
+        title: 'El error más común con el paréntesis',
+        speech:
+          'Tenemos la ecuación 3 por el paréntesis x menos 2 igual a 2x más 5. El error típico en los exámenes es escribir 3x menos 2, olvidando multiplicar el segundo término. ¿A qué términos multiplica el 3 que está fuera?',
+        writingFocusCoord: [250, 150],
+        commands: [
+          { id: 'c1', type: 'clear' },
+          {
+            id: 'c2',
+            type: 'title',
+            text: 'Resolviendo Paso a Paso: 3(x - 2) = 2x + 5',
+            subtitle: 'Modo Tarea: Un empujón a la vez',
+            x: 50,
+            y: 40,
+            color: '#fcd34d',
+          },
+          {
+            id: 'c3',
+            type: 'math',
+            latex: '3(x - 2) = 2x + 5',
+            x: 100,
+            y: 120,
+            scale: 1.3,
+          },
+          {
+            id: 'c4',
+            type: 'arrow',
+            from: [130, 170],
+            to: [170, 170],
+            color: '#f87171',
+            label: 'Aplica propiedad distributiva',
+          },
+        ],
+        socratic: {
+          prompt: 'Al aplicar la propiedad distributiva 3 · (x - 2), ¿cuál es el resultado correcto del lado izquierdo?',
+          options: ['3x - 2', '3x - 6', '3x + 6', 'x - 6'],
+          correctIndex: 1,
+          hint: 'Multiplica 3 · x = 3x, y luego 3 · (-2) = -6.',
+          feedbackCorrect: '¡Perfecto! 3 · x = 3x y 3 · (-2) = -6. La ecuación queda 3x - 6 = 2x + 5.',
+          feedbackRetry: 'Recuerda: el 3 exterior debe multiplicar a cada término dentro del paréntesis.',
+        },
+      },
+      {
+        id: 'alg-2',
+        title: 'Agrupando las incógnitas',
+        speech:
+          'Ahora tenemos 3x - 6 = 2x + 5. Para dejar las incógnitas en un solo lado, restemos 2x en ambos miembros.',
+        writingFocusCoord: [250, 260],
+        commands: [
+          {
+            id: 'c5',
+            type: 'math',
+            latex: '3x - 6 = 2x + 5',
+            x: 100,
+            y: 200,
+            scale: 1.2,
+          },
+          {
+            id: 'c6',
+            type: 'math',
+            latex: '3x - 2x - 6 = 5 \\implies x - 6 = 5',
+            x: 100,
+            y: 270,
+            color: '#60a5fa',
+            scale: 1.2,
+          },
+          {
+            id: 'c7',
+            type: 'math',
+            latex: 'x = 5 + 6 \\implies x = 11',
+            x: 100,
+            y: 350,
+            color: '#4ade80',
+            scale: 1.3,
+          },
+          {
+            id: 'c8',
+            type: 'box',
+            x: 80,
+            y: 330,
+            width: 320,
+            height: 80,
+            color: '#4ade80',
+            label: 'Solución',
+          },
+          {
+            id: 'c9',
+            type: 'box',
+            x: 480,
+            y: 190,
+            width: 440,
+            height: 220,
+            color: '#c084fc',
+            label: 'Comprobación OBLIGATORIA',
+          },
+          {
+            id: 'c10',
+            type: 'math',
+            latex: '3(11 - 2) = 3(9) = 27',
+            x: 510,
+            y: 240,
+            scale: 1.1,
+          },
+          {
+            id: 'c11',
+            type: 'math',
+            latex: '2(11) + 5 = 22 + 5 = 27 \\quad \\checkmark',
+            x: 510,
+            y: 310,
+            scale: 1.1,
+            color: '#facc15',
+          },
+        ],
+      },
+    ],
+    flashcards: [
+      {
+        id: 'fa1',
+        front: '¿Cuál es la propiedad distributiva de a(b - c)?',
+        back: 'a · b - a · c (el factor exterior multiplica a TODOS los elementos dentro del paréntesis).',
+      },
+      {
+        id: 'fa2',
+        front: '¿Cómo comprobamos que una solución x es correcta en una ecuación?',
+        back: 'Sustituyendo el valor en la ecuación original y verificando que ambos miembros den el mismo número.',
+      },
+    ],
+    quiz: [
+      {
+        id: 'qa1',
+        question: 'En la ecuación 4(x + 3) = 20, ¿qué resulta al aplicar la distributiva?',
+        options: ['4x + 3 = 20', '4x + 12 = 20', 'x + 12 = 20', '4x + 7 = 20'],
+        correctIndex: 1,
+        explanation: '4 · x = 4x y 4 · 3 = 12, por tanto 4x + 12 = 20.',
+      },
+    ],
+  },
+  {
+    id: 'fotosintesis-fases',
+    title: 'Fotosíntesis: ¿De dónde sale realmente el Oxígeno que respiramos?',
+    topic: 'Biología Celular y Bioquímica',
+    category: 'Biología',
+    mode: 'topic',
+    teacherId: 'clara',
+    description:
+      'No memorices nombres extraños. Sigue el camino de las moléculas entre los tilacoides y el estroma.',
+    steps: [
+      {
+        id: 'fot-1',
+        title: 'El Origen del Oxígeno',
+        speech:
+          '¡Hola! La mayoría de los libros dan la ecuación general de la fotosíntesis, pero casi todos los estudiantes confunden el origen del oxígeno: ¿proviene del agua o del dióxido de carbono?',
+        writingFocusCoord: [350, 90],
+        commands: [
+          { id: 'c1', type: 'clear' },
+          {
+            id: 'c2',
+            type: 'title',
+            text: 'Fotosíntesis: El Flujo Molecular',
+            subtitle: 'Conexión entre Reacciones Lumínicas y Ciclo de Calvin',
+            x: 50,
+            y: 40,
+            color: '#a7f3d0',
+          },
+          {
+            id: 'c3',
+            type: 'math',
+            latex: '6\\text{CO}_2 + 6\\text{H}_2\\text{O} + \\text{Luz} \\longrightarrow \\text{C}_6\\text{H}_{12}\\text{O}_6 + 6\\text{O}_2',
+            x: 80,
+            y: 110,
+            scale: 1.1,
+          },
+          {
+            id: 'c4',
+            type: 'diagram',
+            kind: 'photosynthesis',
+            x: 60,
+            y: 180,
+            width: 880,
+            height: 280,
+          },
+        ],
+        socratic: {
+          prompt: '¿De qué molécula se desprende el O₂ que libera la planta a la atmósfera?',
+          options: [
+            'Del Dióxido de Carbono (CO₂)',
+            'Del Agua (H₂O) al romperla en los tilacoides',
+            'De la Glucosa sobrante',
+          ],
+          correctIndex: 1,
+          hint: 'En la fotólisis del agua en el Fotosistema II, la luz rompe la molécula de H₂O para extraer sus electrones.',
+          feedbackCorrect:
+            '¡Excelente! El agua (H₂O) se rompe liberando protones, electrones y O₂ gaseoso como subproducto.',
+          feedbackRetry:
+            'Es el error más común pensar que viene del CO₂. En realidad proviene de la fotólisis del agua (H₂O).',
+        },
+      },
+      {
+        id: 'fot-2',
+        title: 'El puente entre las dos fases',
+        speech:
+          '¿Qué pasa de la fase lumínica al ciclo de Calvin en el estroma? Dos transportadores energéticos vitales: ATP y NADPH. El ciclo de Calvin usa esa energía para fijar el carbono del CO₂ y fabricar azúcares.',
+        writingFocusCoord: [500, 320],
+        commands: [
+          {
+            id: 'c5',
+            type: 'box',
+            x: 520,
+            y: 200,
+            width: 400,
+            height: 120,
+            color: '#34d399',
+            label: 'Monedas de Intercambio',
+          },
+          {
+            id: 'c6',
+            type: 'text',
+            text: '⚡ ATP: Moneda de energía libre',
+            x: 540,
+            y: 240,
+            color: '#facc15',
+            style: 'bold',
+          },
+          {
+            id: 'c7',
+            type: 'text',
+            text: '🔋 NADPH: Poder reductor (transportador de electrones)',
+            x: 540,
+            y: 280,
+            color: '#38bdf8',
+            style: 'bold',
+          },
+        ],
+      },
+    ],
+    flashcards: [
+      {
+        id: 'ff1',
+        front: '¿Dónde ocurren las reacciones dependientes de la luz?',
+        back: 'En las membranas de los tilacoides dentro del cloroplasto.',
+      },
+      {
+        id: 'ff2',
+        front: '¿Dónde se lleva a cabo el Ciclo de Calvin (fase oscura)?',
+        back: 'En el estroma del cloroplasto.',
+      },
+    ],
+    quiz: [
+      {
+        id: 'qf1',
+        question: '¿Qué dos moléculas producidas en la fase lumínica son necesarias para alimentar el ciclo de Calvin?',
+        options: ['O₂ y Glucosa', 'ATP y NADPH', 'H₂O y CO₂', 'ADN y Enzimas'],
+        correctIndex: 1,
+        explanation: 'El ATP provee energía y el NADPH provee los electrones e hidrógenos para fijar el CO₂ en azúcares.',
+      },
+    ],
+  },
+];

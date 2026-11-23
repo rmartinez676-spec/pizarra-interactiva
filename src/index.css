@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    --hand: 'Caveat', 'Kalam', cursive;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--sans);
+    background-color: #020617;
+    color: #f8fafc;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-height: 100vh;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleUp {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-scaleUp {
+  animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* KaTeX custom sizing and font adjustments on whiteboard */
+.katex-display {
+  margin: 0 !important;
+}
+
+.katex {
+  font-size: 1.15em;
+  text-rendering: optimizeLegibility;
+}
