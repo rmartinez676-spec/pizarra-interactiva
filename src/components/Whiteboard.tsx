@@ -1,5 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import katex from 'katex';
+import {
+  PenTool,
+  Eraser,
+  RotateCcw,
+  FastForward,
+  Download,
+} from 'lucide-react';
 import type { BoardCommand, BoardStyle, Teacher } from '../types';
 
 interface WhiteboardProps {
@@ -11,36 +18,67 @@ interface WhiteboardProps {
   onDownloadReady?: (canvas: HTMLCanvasElement) => void;
 }
 
+interface StylusState {
+  x: number;
+  y: number;
+  color: string;
+  visible: boolean;
+}
+
+interface UserStroke {
+  color: string;
+  width: number;
+  points: [number, number][];
+}
+
 export const Whiteboard: React.FC<WhiteboardProps> = ({
   boardStyle,
   commands,
   activeTeacher,
   isWriting,
-  focusCoord,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const userCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [renderedMath, setRenderedMath] = useState<{ id: string; html: string; x: number; y: number; color?: string; scale?: number }[]>([]);
 
-  // Whiteboard internal coordinate space (1000 x 600)
+  const [renderedMath, setRenderedMath] = useState<{
+    id: string;
+    html: string;
+    x: number;
+    y: number;
+    color?: string;
+    scale?: number;
+  }[]>([]);
+
+  // Stylus state for real-time animated marker
+  const [stylus, setStylus] = useState<StylusState>({
+    x: 0,
+    y: 0,
+    color: activeTeacher.accentColor || '#2563eb',
+    visible: false,
+  });
+
+  // Student drawing layer states
+  const [isDrawModeActive, setIsDrawModeActive] = useState<boolean>(false);
+  const [userColor, setUserColor] = useState<string>('#2563eb');
+  const [userStrokeWidth, setUserStrokeWidth] = useState<number>(3);
+  const [isEraser, setIsEraser] = useState<boolean>(false);
+  const [userStrokes, setUserStrokes] = useState<UserStroke[]>([]);
+  const isDrawingUser = useRef<boolean>(false);
+  const currentStrokePoints = useRef<[number, number][]>([]);
+
+  // Animation cancel ref to allow skipping or interrupting
+  const cancelAnimRef = useRef<boolean>(false);
+  const [isAnimatingStroke, setIsAnimatingStroke] = useState<boolean>(false);
+
+  // Whiteboard internal coordinate space (1000 x 580)
   const V_WIDTH = 1000;
   const V_HEIGHT = 580;
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Set canvas dimensions
-    canvas.width = V_WIDTH;
-    canvas.height = V_HEIGHT;
-
-    // Draw background
+  // Render static background
+  const drawBackground = useCallback((ctx: CanvasRenderingContext2D) => {
     ctx.clearRect(0, 0, V_WIDTH, V_HEIGHT);
-
     if (boardStyle === 'chalkboard') {
-      // Classic slate chalkboard
       const grad = ctx.createLinearGradient(0, 0, V_WIDTH, V_HEIGHT);
       grad.addColorStop(0, '#122319');
       grad.addColorStop(0.5, '#162b20');
@@ -48,38 +86,20 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
 
-      // Subtle chalk dust specks
       ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
       for (let i = 0; i < 400; i++) {
         const x = (i * 137) % V_WIDTH;
         const y = (i * 97) % V_HEIGHT;
         ctx.fillRect(x, y, 1.5, 1.5);
       }
-
-      // Chalk grid lines (very subtle)
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
-      ctx.lineWidth = 1;
-      for (let x = 50; x < V_WIDTH; x += 50) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, V_HEIGHT);
-        ctx.stroke();
-      }
-      for (let y = 50; y < V_HEIGHT; y += 50) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(V_WIDTH, y);
-        ctx.stroke();
-      }
     } else {
-      // Clean modern whiteboard
+      // Clean modern whiteboard with subtle dot grid
       const grad = ctx.createLinearGradient(0, 0, 0, V_HEIGHT);
-      grad.addColorStop(0, '#fbfcfe');
+      grad.addColorStop(0, '#fdfdfe');
       grad.addColorStop(1, '#f1f5f9');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
 
-      // Subtle marker dot grid
       ctx.fillStyle = 'rgba(100, 116, 139, 0.08)';
       for (let x = 40; x < V_WIDTH; x += 40) {
         for (let y = 40; y < V_HEIGHT; y += 40) {
@@ -89,32 +109,37 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         }
       }
     }
+  }, [boardStyle]);
 
+  // Full instant command renderer (static or when skipped)
+  const renderAllCommandsInstant = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    cancelAnimRef.current = true;
+    setIsAnimatingStroke(false);
+    setStylus(prev => ({ ...prev, visible: false }));
+
+    drawBackground(ctx);
     const mathItems: typeof renderedMath = [];
 
-    // Render commands in sequence
     commands.forEach(cmd => {
       switch (cmd.type) {
         case 'clear':
-          ctx.clearRect(0, 0, V_WIDTH, V_HEIGHT);
-          if (boardStyle === 'chalkboard') {
-            ctx.fillStyle = '#162b20';
-            ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
-          } else {
-            ctx.fillStyle = '#f8fafc';
-            ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
-          }
+          drawBackground(ctx);
           break;
 
         case 'title': {
           ctx.save();
           const titleColor =
-            cmd.color || (boardStyle === 'chalkboard' ? '#fef08a' : '#0f172a');
+            cmd.color || (boardStyle === 'chalkboard' ? '#fef08a' : '#1e3a8a');
           ctx.fillStyle = titleColor;
-          ctx.font = '700 28px "Kalam", "Caveat", cursive, sans-serif';
+          ctx.font = '700 26px "Kalam", "Patrick Hand", cursive, sans-serif';
           ctx.fillText(cmd.text, cmd.x, cmd.y);
 
-          // Hand-drawn wavy underline
+          // Wavy underline
           const textMetrics = ctx.measureText(cmd.text);
           ctx.strokeStyle = titleColor;
           ctx.lineWidth = 2.5;
@@ -132,9 +157,9 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           ctx.stroke();
 
           if (cmd.subtitle) {
-            ctx.font = '500 15px "Plus Jakarta Sans", sans-serif';
-            ctx.fillStyle = boardStyle === 'chalkboard' ? '#94a3b8' : '#64748b';
-            ctx.fillText(cmd.subtitle, cmd.x, cmd.y + 28);
+            ctx.font = '500 14px "Plus Jakarta Sans", sans-serif';
+            ctx.fillStyle = boardStyle === 'chalkboard' ? '#94a3b8' : '#475569';
+            ctx.fillText(cmd.subtitle, cmd.x, cmd.y + 26);
           }
           ctx.restore();
           break;
@@ -143,16 +168,10 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         case 'text': {
           ctx.save();
           const textColor =
-            cmd.color || (boardStyle === 'chalkboard' ? '#f8fafc' : '#1e293b');
+            cmd.color || (boardStyle === 'chalkboard' ? '#f8fafc' : '#0f172a');
           ctx.fillStyle = textColor;
-          const fontSize = cmd.size || 18;
-          if (cmd.style === 'hand') {
-            ctx.font = `600 ${fontSize + 4}px "Caveat", cursive, sans-serif`;
-          } else if (cmd.style === 'bold') {
-            ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
-          } else {
-            ctx.font = `500 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
-          }
+          const fontSize = cmd.size || 17;
+          ctx.font = `${cmd.style === 'bold' ? '700' : '600'} ${fontSize}px "Patrick Hand", "Caveat", cursive, sans-serif`;
           ctx.fillText(cmd.text, cmd.x, cmd.y);
           ctx.restore();
           break;
@@ -161,7 +180,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         case 'box': {
           ctx.save();
           const boxColor =
-            cmd.color || (boardStyle === 'chalkboard' ? '#cbd5e1' : '#334155');
+            cmd.color || (boardStyle === 'chalkboard' ? '#cbd5e1' : '#2563eb');
           ctx.strokeStyle = boxColor;
           ctx.lineWidth = 2.5;
 
@@ -170,17 +189,10 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             ctx.fillRect(cmd.x, cmd.y, cmd.width, cmd.height);
           }
 
-          // Hand-drawn box with slight corner jitter
-          ctx.beginPath();
-          ctx.moveTo(cmd.x, cmd.y);
-          ctx.lineTo(cmd.x + cmd.width, cmd.y + 1);
-          ctx.lineTo(cmd.x + cmd.width - 1, cmd.y + cmd.height);
-          ctx.lineTo(cmd.x + 1, cmd.y + cmd.height - 1);
-          ctx.closePath();
-          ctx.stroke();
+          ctx.strokeRect(cmd.x, cmd.y, cmd.width, cmd.height);
 
           if (cmd.label) {
-            ctx.font = '700 13px "Plus Jakarta Sans", sans-serif';
+            ctx.font = '700 13px "Patrick Hand", "Plus Jakarta Sans", sans-serif';
             ctx.fillStyle = boxColor;
             ctx.fillText(cmd.label.toUpperCase(), cmd.x + 10, cmd.y - 7);
           }
@@ -224,9 +236,8 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           ctx.lineTo(x2, y2);
           ctx.stroke();
 
-          // Arrow head
           const angle = Math.atan2(y2 - y1, x2 - x1);
-          const headLen = 12;
+          const headLen = 14;
           ctx.beginPath();
           ctx.moveTo(x2, y2);
           ctx.lineTo(
@@ -241,7 +252,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           ctx.fill();
 
           if (cmd.label) {
-            ctx.font = '600 14px "Caveat", cursive, sans-serif';
+            ctx.font = '600 14px "Patrick Hand", cursive';
             ctx.fillStyle = arrowColor;
             const midX = (x1 + x2) / 2;
             const midY = (y1 + y2) / 2 - 8;
@@ -257,7 +268,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             cmd.color ||
             (boardStyle === 'chalkboard'
               ? 'rgba(250, 204, 21, 0.2)'
-              : 'rgba(254, 240, 138, 0.5)');
+              : 'rgba(254, 240, 138, 0.55)');
           ctx.fillRect(cmd.x, cmd.y, cmd.width, cmd.height);
           ctx.restore();
           break;
@@ -274,7 +285,6 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         }
 
         case 'math': {
-          // Render KaTeX HTML
           try {
             const html = katex.renderToString(cmd.latex, {
               displayMode: true,
@@ -288,16 +298,429 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
               color: cmd.color,
               scale: cmd.scale,
             });
-          } catch (e) {
-            console.warn('Katex render error:', e);
-          }
+          } catch {}
           break;
         }
       }
     });
 
     setRenderedMath(mathItems);
-  }, [commands, boardStyle]);
+  }, [commands, boardStyle, drawBackground]);
+
+  // LIVE STROKE ANIMATION ENGINE (Khan Academy / Ahaboard Real-Time Writing)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = V_WIDTH;
+    canvas.height = V_HEIGHT;
+
+    // If there are no commands or writing is false, render instantly
+    if (commands.length === 0 || !isWriting) {
+      renderAllCommandsInstant();
+      return;
+    }
+
+    // Cancel any ongoing animation
+    cancelAnimRef.current = false;
+    setIsAnimatingStroke(true);
+    drawBackground(ctx);
+
+    let cmdIdx = 0;
+
+    const runNextCommand = () => {
+      if (cancelAnimRef.current || cmdIdx >= commands.length) {
+        setIsAnimatingStroke(false);
+        setStylus(prev => ({ ...prev, visible: false }));
+        return;
+      }
+
+      const cmd = commands[cmdIdx];
+      cmdIdx++;
+
+      switch (cmd.type) {
+        case 'clear':
+          drawBackground(ctx);
+          runNextCommand();
+          break;
+
+        case 'title': {
+          const color = cmd.color || '#1e3a8a';
+          animateTextHandwriting(
+            ctx,
+            cmd.text,
+            cmd.x,
+            cmd.y,
+            26,
+            color,
+            'Kalam',
+            () => {
+              if (cmd.subtitle) {
+                animateTextHandwriting(
+                  ctx,
+                  cmd.subtitle,
+                  cmd.x,
+                  cmd.y + 26,
+                  14,
+                  '#475569',
+                  'Plus Jakarta Sans',
+                  runNextCommand
+                );
+              } else {
+                runNextCommand();
+              }
+            }
+          );
+          break;
+        }
+
+        case 'text': {
+          const color = cmd.color || (boardStyle === 'chalkboard' ? '#f8fafc' : '#0f172a');
+          const fontSize = cmd.size || 17;
+          animateTextHandwriting(
+            ctx,
+            cmd.text,
+            cmd.x,
+            cmd.y,
+            fontSize,
+            color,
+            'Patrick Hand',
+            runNextCommand
+          );
+          break;
+        }
+
+        case 'box': {
+          const boxColor = cmd.color || '#2563eb';
+          animateBoxStroke(
+            ctx,
+            cmd.x,
+            cmd.y,
+            cmd.width,
+            cmd.height,
+            boxColor,
+            cmd.label,
+            runNextCommand
+          );
+          break;
+        }
+
+        case 'arrow': {
+          const arrowColor = cmd.color || '#dc2626';
+          animateArrowStroke(
+            ctx,
+            cmd.from[0],
+            cmd.from[1],
+            cmd.to[0],
+            cmd.to[1],
+            arrowColor,
+            runNextCommand
+          );
+          break;
+        }
+
+        case 'highlight': {
+          ctx.save();
+          ctx.fillStyle = cmd.color || 'rgba(254, 240, 138, 0.55)';
+          ctx.fillRect(cmd.x, cmd.y, cmd.width, cmd.height);
+          ctx.restore();
+          setStylus({
+            x: cmd.x + cmd.width,
+            y: cmd.y + cmd.height / 2,
+            color: '#eab308',
+            visible: true,
+          });
+          setTimeout(runNextCommand, 150);
+          break;
+        }
+
+        case 'math': {
+          try {
+            const html = katex.renderToString(cmd.latex, {
+              displayMode: true,
+              throwOnError: false,
+            });
+            setRenderedMath(prev => [
+              ...prev,
+              { id: cmd.id, html, x: cmd.x, y: cmd.y, color: cmd.color, scale: cmd.scale },
+            ]);
+          } catch {}
+          runNextCommand();
+          break;
+        }
+
+        case 'graph': {
+          drawCartesianGraph(ctx, cmd, boardStyle);
+          runNextCommand();
+          break;
+        }
+
+        case 'diagram': {
+          drawPredefinedDiagram(ctx, cmd, boardStyle);
+          runNextCommand();
+          break;
+        }
+
+        default:
+          runNextCommand();
+          break;
+      }
+    };
+
+    runNextCommand();
+
+    return () => {
+      cancelAnimRef.current = true;
+    };
+  }, [commands, isWriting, boardStyle, drawBackground, renderAllCommandsInstant]);
+
+  // ANIMATION PRIMITIVES
+  const animateTextHandwriting = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    size: number,
+    color: string,
+    fontFamily: string,
+    onDone: () => void
+  ) => {
+    ctx.save();
+    ctx.font = `700 ${size}px "${fontFamily}", "Patrick Hand", cursive, sans-serif`;
+    ctx.fillStyle = color;
+
+    let charIdx = 0;
+    let curX = x;
+
+    const step = () => {
+      if (cancelAnimRef.current) {
+        ctx.restore();
+        return;
+      }
+      if (charIdx < text.length) {
+        const char = text[charIdx];
+        ctx.fillText(char, curX, y);
+        const charWidth = ctx.measureText(char).width;
+        curX += charWidth;
+        setStylus({ x: curX, y, color, visible: true });
+        charIdx++;
+        setTimeout(step, 14);
+      } else {
+        ctx.restore();
+        onDone();
+      }
+    };
+
+    step();
+  };
+
+  const animateLineStroke = (
+    ctx: CanvasRenderingContext2D,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    color: string,
+    lineWidth: number,
+    onDone: () => void
+  ) => {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+
+    let progress = 0;
+    const steps = 15;
+
+    const step = () => {
+      if (cancelAnimRef.current) {
+        ctx.restore();
+        return;
+      }
+      progress++;
+      const t = Math.min(1, progress / steps);
+      const curX = x1 + (x2 - x1) * t;
+      const curY = y1 + (y2 - y1) * t;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(curX, curY);
+      ctx.stroke();
+
+      setStylus({ x: curX, y: curY, color, visible: true });
+
+      if (t < 1) {
+        setTimeout(step, 12);
+      } else {
+        ctx.restore();
+        onDone();
+      }
+    };
+
+    step();
+  };
+
+  const animateBoxStroke = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    color: string,
+    label?: string,
+    onDone?: () => void
+  ) => {
+    animateLineStroke(ctx, x, y, x + w, y, color, 2.5, () => {
+      animateLineStroke(ctx, x + w, y, x + w, y + h, color, 2.5, () => {
+        animateLineStroke(ctx, x + w, y + h, x, y + h, color, 2.5, () => {
+          animateLineStroke(ctx, x, y + h, x, y, color, 2.5, () => {
+            if (label) {
+              animateTextHandwriting(
+                ctx,
+                label.toUpperCase(),
+                x + 10,
+                y - 7,
+                13,
+                color,
+                'Patrick Hand',
+                () => onDone?.()
+              );
+            } else {
+              onDone?.();
+            }
+          });
+        });
+      });
+    });
+  };
+
+  const animateArrowStroke = (
+    ctx: CanvasRenderingContext2D,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    color: string,
+    onDone: () => void
+  ) => {
+    animateLineStroke(ctx, x1, y1, x2, y2, color, 2.5, () => {
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      const headLen = 14;
+      const h1X = x2 - headLen * Math.cos(angle - Math.PI / 6);
+      const h1Y = y2 - headLen * Math.sin(angle - Math.PI / 6);
+      const h2X = x2 - headLen * Math.cos(angle + Math.PI / 6);
+      const h2Y = y2 - headLen * Math.sin(angle + Math.PI / 6);
+
+      animateLineStroke(ctx, x2, y2, h1X, h1Y, color, 2.5, () => {
+        animateLineStroke(ctx, x2, y2, h2X, h2Y, color, 2.5, onDone);
+      });
+    });
+  };
+
+  // STUDENT DRAWING HANDLERS
+  const startUserDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawModeActive) return;
+    const canvas = userCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = V_WIDTH / rect.width;
+    const scaleY = V_HEIGHT / rect.height;
+
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    isDrawingUser.current = true;
+    currentStrokePoints.current = [[x, y]];
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.save();
+    if (isEraser) {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = 24;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = userColor;
+      ctx.lineWidth = userStrokeWidth;
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const drawUserMovement = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawModeActive || !isDrawingUser.current) return;
+    const canvas = userCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = V_WIDTH / rect.width;
+    const scaleY = V_HEIGHT / rect.height;
+
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    currentStrokePoints.current.push([x, y]);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const stopUserDrawing = () => {
+    if (!isDrawModeActive || !isDrawingUser.current) return;
+    isDrawingUser.current = false;
+    const canvas = userCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.restore();
+
+    if (currentStrokePoints.current.length > 1) {
+      setUserStrokes(prev => [
+        ...prev,
+        {
+          color: isEraser ? 'erase' : userColor,
+          width: isEraser ? 24 : userStrokeWidth,
+          points: currentStrokePoints.current,
+        },
+      ]);
+    }
+    currentStrokePoints.current = [];
+  };
+
+  const clearStudentNotes = () => {
+    const canvas = userCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, V_WIDTH, V_HEIGHT);
+    setUserStrokes([]);
+  };
+
+  const handleDownloadBoard = () => {
+    const mainCanvas = canvasRef.current;
+    if (!mainCanvas) return;
+
+    // Create export canvas merging teacher board + student annotations
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = V_WIDTH;
+    exportCanvas.height = V_HEIGHT;
+    const expCtx = exportCanvas.getContext('2d');
+    if (!expCtx) return;
+
+    expCtx.drawImage(mainCanvas, 0, 0);
+    if (userCanvasRef.current) {
+      expCtx.drawImage(userCanvasRef.current, 0, 0);
+    }
+
+    const link = document.createElement('a');
+    link.download = `pizarra_clase_${Date.now()}.png`;
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+  };
 
   // Diagram Renderers
   function drawCartesianGraph(
@@ -306,9 +729,8 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     style: BoardStyle
   ) {
     ctx.save();
-    const { x, y, width, height, equations, xRange, yRange, title, highlightPoints } = cmd;
+    const { x, y, width, height, equations, xRange, yRange, title } = cmd;
 
-    // Background box
     ctx.fillStyle = style === 'chalkboard' ? 'rgba(0,0,0,0.3)' : '#ffffff';
     ctx.fillRect(x, y, width, height);
     ctx.strokeStyle = style === 'chalkboard' ? '#475569' : '#cbd5e1';
@@ -321,20 +743,17 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     const mapX = (val: number) => x + ((val - xMin) / (xMax - xMin)) * width;
     const mapY = (val: number) => y + height - ((val - yMin) / (yMax - yMin)) * height;
 
-    // Axes
     const zeroX = mapX(0);
     const zeroY = mapY(0);
 
     ctx.strokeStyle = style === 'chalkboard' ? '#64748b' : '#94a3b8';
     ctx.lineWidth = 2;
-    // X Axis
     if (zeroY >= y && zeroY <= y + height) {
       ctx.beginPath();
       ctx.moveTo(x, zeroY);
       ctx.lineTo(x + width, zeroY);
       ctx.stroke();
     }
-    // Y Axis
     if (zeroX >= x && zeroX <= x + width) {
       ctx.beginPath();
       ctx.moveTo(zeroX, y);
@@ -342,22 +761,6 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       ctx.stroke();
     }
 
-    // Grid ticks
-    ctx.font = '10px "Plus Jakarta Sans", sans-serif';
-    ctx.fillStyle = style === 'chalkboard' ? '#94a3b8' : '#64748b';
-    for (let xi = Math.ceil(xMin); xi <= Math.floor(xMax); xi++) {
-      if (xi === 0) continue;
-      const px = mapX(xi);
-      if (px > x + 10 && px < x + width - 10) {
-        ctx.beginPath();
-        ctx.moveTo(px, zeroY - 3);
-        ctx.lineTo(px, zeroY + 3);
-        ctx.stroke();
-        ctx.fillText(xi.toString(), px - 4, zeroY + 14);
-      }
-    }
-
-    // Plot equations
     equations.forEach(eq => {
       ctx.strokeStyle = eq.color;
       ctx.lineWidth = 2.5;
@@ -370,7 +773,6 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         try {
           if (eq.expression === 'x^2') valY = valX * valX;
           else if (eq.expression === '4*x - 3') valY = 4 * valX - 3;
-          else if (eq.expression === '4*x - 4') valY = 4 * valX - 4;
           else valY = valX;
         } catch {
           continue;
@@ -389,26 +791,6 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         }
       }
       ctx.stroke();
-
-      if (eq.label) {
-        ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-        ctx.fillStyle = eq.color;
-        ctx.fillText(eq.label, x + width - 75, y + 25 + equations.indexOf(eq) * 18);
-      }
-    });
-
-    // Highlight points
-    highlightPoints?.forEach(pt => {
-      const px = mapX(pt.x);
-      const py = mapY(pt.y);
-      ctx.fillStyle = '#f43f5e';
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = style === 'chalkboard' ? '#f8fafc' : '#0f172a';
-      ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(pt.label, px + 8, py - 4);
     });
 
     if (title) {
@@ -428,11 +810,9 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     const { x, y, width, height, kind } = cmd;
 
     if (kind === 'projectile') {
-      // Table / cliff edge
       ctx.fillStyle = style === 'chalkboard' ? '#334155' : '#e2e8f0';
       ctx.fillRect(x, y + 60, 90, height - 60);
 
-      // Floor line
       ctx.strokeStyle = style === 'chalkboard' ? '#64748b' : '#94a3b8';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -440,14 +820,12 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       ctx.lineTo(x + width, y + height);
       ctx.stroke();
 
-      // Ball A: Dropped vertically
       const ballAX = x + 30;
       ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
       ctx.arc(ballAX, y + 45, 12, 0, Math.PI * 2);
       ctx.fill();
 
-      // Dotted straight path down
       ctx.setLineDash([5, 5]);
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
@@ -456,36 +834,12 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       ctx.lineTo(ballAX, y + height - 12);
       ctx.stroke();
 
-      // Ground impact A
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath();
-      ctx.arc(ballAX, y + height - 12, 12, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Ball B: Thrown sideways
       const ballBX = x + 70;
       ctx.fillStyle = '#f43f5e';
       ctx.beginPath();
       ctx.arc(ballBX, y + 45, 12, 0, Math.PI * 2);
       ctx.fill();
 
-      // Horizontal velocity arrow
-      ctx.setLineDash([]);
-      ctx.strokeStyle = '#f43f5e';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(ballBX + 14, y + 45);
-      ctx.lineTo(ballBX + 60, y + 45);
-      ctx.stroke();
-      // Arrowhead
-      ctx.fillStyle = '#f43f5e';
-      ctx.beginPath();
-      ctx.moveTo(ballBX + 60, y + 45);
-      ctx.lineTo(ballBX + 50, y + 40);
-      ctx.lineTo(ballBX + 50, y + 50);
-      ctx.fill();
-
-      // Parabolic arc for B
       ctx.setLineDash([6, 6]);
       ctx.strokeStyle = '#f43f5e';
       ctx.lineWidth = 2.5;
@@ -494,201 +848,246 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       const impactBX = x + width - 50;
       ctx.quadraticCurveTo(ballBX + 180, y + 50, impactBX, y + height - 12);
       ctx.stroke();
-
-      // Ground impact B
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#f43f5e';
-      ctx.beginPath();
-      ctx.arc(impactBX, y + height - 12, 12, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Labels
-      ctx.font = '700 13px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillText('A (Soltada)', ballAX - 25, y + 25);
-      ctx.fillStyle = '#f43f5e';
-      ctx.fillText('B (Lanzada v_x)', ballBX - 10, y + 25);
-
-      // Same time marker
-      ctx.fillStyle = '#fef08a';
-      ctx.font = '700 14px "Caveat", cursive, sans-serif';
-      ctx.fillText('✓ ¡Mismo tiempo t = √(2h/g)!', x + width / 2 - 80, y + height - 25);
-    } else if (kind === 'photosynthesis') {
-      // Chloroplast container
-      ctx.fillStyle = style === 'chalkboard' ? 'rgba(6, 78, 59, 0.4)' : '#ecfdf5';
-      ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.roundRect(x, y, width, height, 16);
-      ctx.fill();
-      ctx.stroke();
-
-      // Title tag
-      ctx.font = '700 14px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = '#10b981';
-      ctx.fillText('CLOROPLASTO', x + 20, y + 28);
-
-      // Stage 1: Thylakoid membrane
-      ctx.fillStyle = style === 'chalkboard' ? 'rgba(5, 150, 105, 0.5)' : '#a7f3d0';
-      ctx.strokeStyle = '#059669';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x + 40, y + 50, 320, 200, 12);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = style === 'chalkboard' ? '#ecfdf5' : '#065f46';
-      ctx.font = '700 16px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('Fase Lumínica (Tilacoides)', x + 60, y + 80);
-
-      // Light + H2O in, O2 out
-      ctx.font = '600 14px "Caveat", cursive, sans-serif';
-      ctx.fillStyle = '#facc15';
-      ctx.fillText('☀️ Luz solar', x + 60, y + 115);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillText('💧 H₂O (Agua)', x + 60, y + 145);
-      ctx.fillStyle = '#4ade80';
-      ctx.fillText('🍃 Libera O₂ (Oxígeno)', x + 60, y + 225);
-
-      // Stage 2: Stroma (Calvin Cycle)
-      ctx.fillStyle = style === 'chalkboard' ? 'rgba(217, 119, 6, 0.3)' : '#fef3c7';
-      ctx.strokeStyle = '#d97706';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x + 500, y + 50, 320, 200, 12);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = style === 'chalkboard' ? '#fef3c7' : '#92400e';
-      ctx.font = '700 16px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('Ciclo de Calvin (Estroma)', x + 530, y + 80);
-
-      ctx.font = '600 14px "Caveat", cursive, sans-serif';
-      ctx.fillStyle = '#f87171';
-      ctx.fillText('💨 Entrada: CO₂', x + 540, y + 120);
-      ctx.fillStyle = '#facc15';
-      ctx.fillText('🍬 Salida: Glucosa (C₆H₁₂O₆)', x + 540, y + 225);
-
-      // Bridge arrows: ATP & NADPH -> and ADP + NADP+ <-
-      ctx.strokeStyle = '#facc15';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(x + 365, y + 110);
-      ctx.lineTo(x + 495, y + 110);
-      ctx.stroke();
-      ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = '#facc15';
-      ctx.fillText('ATP + NADPH ➔', x + 380, y + 102);
-
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x + 495, y + 170);
-      ctx.lineTo(x + 365, y + 170);
-      ctx.stroke();
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText('⬅ ADP + NADP+', x + 380, y + 190);
     }
     ctx.restore();
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative w-full aspect-[1000/580] rounded-2xl overflow-hidden shadow-2xl transition-all duration-300 border-4 ${
-        boardStyle === 'chalkboard'
-          ? 'border-amber-950/80 bg-[#122319]'
-          : 'border-slate-300 bg-white'
-      }`}
-    >
-      {/* Chalk / Whiteboard Tray Simulation at bottom */}
-      <div
-        className={`absolute bottom-0 left-0 right-0 h-4 z-10 flex items-center justify-end px-6 gap-2 border-t ${
-          boardStyle === 'chalkboard'
-            ? 'bg-amber-950/90 border-amber-900'
-            : 'bg-slate-200 border-slate-300'
-        }`}
-      >
-        {/* Decorative Chalk pieces / markers */}
-        {boardStyle === 'chalkboard' ? (
-          <>
-            <div className="w-8 h-2 rounded-sm bg-white/90 shadow-sm transform -rotate-2" />
-            <div className="w-7 h-2 rounded-sm bg-yellow-200/90 shadow-sm transform rotate-1" />
-            <div className="w-6 h-2 rounded-sm bg-cyan-200/90 shadow-sm" />
-            <div className="w-12 h-3 rounded bg-amber-900 border border-amber-800 text-[8px] text-amber-200 flex items-center justify-center font-bold">
-              BORRADOR
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="w-9 h-2.5 rounded-full bg-slate-900 shadow-sm" />
-            <div className="w-9 h-2.5 rounded-full bg-blue-600 shadow-sm" />
-            <div className="w-9 h-2.5 rounded-full bg-red-600 shadow-sm" />
-          </>
-        )}
+    <div className="space-y-2">
+      {/* Whiteboard Interactive Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        {/* Student Drawing Controls */}
+        <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl shadow-md">
+          <button
+            onClick={() => setIsDrawModeActive(!isDrawModeActive)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+              isDrawModeActive
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title="Activar o desactivar tu propio rotulador para escribir o hacer anotaciones en la pizarra"
+          >
+            <PenTool className="w-3.5 h-3.5" />
+            <span>{isDrawModeActive ? 'Modo Dibujo: ACTIVO' : '✏️ Dibujar tú en la pizarra'}</span>
+          </button>
+
+          {isDrawModeActive && (
+            <>
+              {/* Color options */}
+              <div className="flex items-center gap-1 px-1 border-l border-slate-700">
+                <button
+                  onClick={() => {
+                    setUserColor('#2563eb');
+                    setIsEraser(false);
+                    setUserStrokeWidth(3);
+                  }}
+                  className={`w-6 h-6 rounded-full bg-blue-600 transition-transform ${
+                    userColor === '#2563eb' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  }`}
+                  title="Rotulador Azul"
+                />
+                <button
+                  onClick={() => {
+                    setUserColor('#dc2626');
+                    setIsEraser(false);
+                    setUserStrokeWidth(3);
+                  }}
+                  className={`w-6 h-6 rounded-full bg-red-600 transition-transform ${
+                    userColor === '#dc2626' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  }`}
+                  title="Rotulador Rojo"
+                />
+                <button
+                  onClick={() => {
+                    setUserColor('#0f172a');
+                    setIsEraser(false);
+                    setUserStrokeWidth(3);
+                  }}
+                  className={`w-6 h-6 rounded-full bg-slate-900 border border-slate-600 transition-transform ${
+                    userColor === '#0f172a' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  }`}
+                  title="Rotulador Negro"
+                />
+                <button
+                  onClick={() => {
+                    setUserColor('#059669');
+                    setIsEraser(false);
+                    setUserStrokeWidth(3);
+                  }}
+                  className={`w-6 h-6 rounded-full bg-emerald-600 transition-transform ${
+                    userColor === '#059669' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  }`}
+                  title="Rotulador Verde"
+                />
+                <button
+                  onClick={() => {
+                    setUserColor('rgba(250, 204, 21, 0.4)');
+                    setIsEraser(false);
+                    setUserStrokeWidth(16);
+                  }}
+                  className={`w-6 h-6 rounded-full bg-yellow-400 transition-transform ${
+                    userColor.includes('250, 204, 21') && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  }`}
+                  title="Subrayador Fluorescente"
+                />
+                <button
+                  onClick={() => setIsEraser(true)}
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                    isEraser ? 'bg-amber-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  }`}
+                  title="Borrador de notas"
+                >
+                  <Eraser className="w-3 h-3" />
+                  <span>Goma</span>
+                </button>
+              </div>
+
+              {userStrokes.length > 0 && (
+                <button
+                  onClick={clearStudentNotes}
+                  className="px-2 py-1 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                  title="Borrar únicamente tus anotaciones"
+                >
+                  <RotateCcw className="w-3 h-3 inline mr-1" />
+                  Limpiar mis notas
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Board Fast-Forward & Download Controls */}
+        <div className="flex items-center gap-2">
+          {isAnimatingStroke && (
+            <button
+              onClick={renderAllCommandsInstant}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1 transition-colors"
+              title="Mostrar todo el contenido de la pizarra de inmediato"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+              <span>Ver Todo (Saltar Trazo)</span>
+            </button>
+          )}
+
+          <button
+            onClick={handleDownloadBoard}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-colors"
+            title="Guardar captura de la pizarra completa en PNG"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-400" />
+            <span className="hidden sm:inline">Descargar Pizarra</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main HTML5 Canvas */}
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full block"
-        style={{ imageRendering: 'auto' }}
-      />
-
-      {/* KaTeX Math Overlay Elements */}
-      {renderedMath.map(item => (
-        <div
-          key={item.id}
-          className="absolute transform -translate-y-1/2 pointer-events-none select-none transition-opacity duration-300"
-          style={{
-            left: `${(item.x / V_WIDTH) * 100}%`,
-            top: `${(item.y / V_HEIGHT) * 100}%`,
-            color:
-              item.color || (boardStyle === 'chalkboard' ? '#f8fafc' : '#0f172a'),
-            transform: `scale(${item.scale || 1.1})`,
-            transformOrigin: 'left center',
-          }}
-          dangerouslySetInnerHTML={{ __html: item.html }}
+      {/* Main Whiteboard Canvas Container */}
+      <div
+        ref={containerRef}
+        className={`relative w-full aspect-[1000/580] rounded-2xl overflow-hidden shadow-2xl transition-all duration-300 border-4 ${
+          boardStyle === 'chalkboard'
+            ? 'border-amber-950/80 bg-[#122319]'
+            : 'border-slate-300 bg-white'
+        }`}
+      >
+        {/* Base Canvas (Teacher's real-time animated strokes) */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full block"
+          width={V_WIDTH}
+          height={V_HEIGHT}
         />
-      ))}
 
-      {/* Live Writing Marker / Pointer (Travels to focus coordinate) */}
-      {isWriting && focusCoord && (
-        <div
-          className="absolute pointer-events-none transition-all duration-300 ease-out z-20"
-          style={{
-            left: `${(focusCoord[0] / V_WIDTH) * 100}%`,
-            top: `${(focusCoord[1] / V_HEIGHT) * 100}%`,
-          }}
-        >
-          {/* Animated Hand / Stylus indicator */}
-          <div className="relative -top-2 -left-2 flex items-center gap-1.5 animate-bounce">
-            <div
-              className="w-4 h-4 rounded-full border-2 border-white shadow-lg animate-ping absolute"
-              style={{ backgroundColor: activeTeacher.accentColor }}
-            />
-            <div
-              className="w-4 h-4 rounded-full border-2 border-white shadow-md relative z-10"
-              style={{ backgroundColor: activeTeacher.accentColor }}
-            />
-            <span
-              className="text-[11px] font-bold px-2 py-0.5 rounded shadow-md backdrop-blur-md whitespace-nowrap"
-              style={{
-                backgroundColor:
-                  boardStyle === 'chalkboard'
-                    ? 'rgba(15, 23, 42, 0.85)'
-                    : 'rgba(255, 255, 255, 0.9)',
-                color:
-                  boardStyle === 'chalkboard'
-                    ? '#f8fafc'
-                    : '#0f172a',
-              }}
+        {/* Student Drawing Overlay Canvas */}
+        <canvas
+          ref={userCanvasRef}
+          className={`absolute inset-0 w-full h-full block z-20 ${
+            isDrawModeActive ? 'cursor-crosshair' : 'pointer-events-none'
+          }`}
+          width={V_WIDTH}
+          height={V_HEIGHT}
+          onPointerDown={startUserDrawing}
+          onPointerMove={drawUserMovement}
+          onPointerUp={stopUserDrawing}
+          onPointerLeave={stopUserDrawing}
+        />
+
+        {/* REAL-TIME DRY-ERASE MARKER STYLUS (Rotulador físico que sigue el trazo) */}
+        {stylus.visible && (
+          <div
+            className="absolute pointer-events-none z-30 transition-transform duration-75"
+            style={{
+              left: `${(stylus.x / V_WIDTH) * 100}%`,
+              top: `${(stylus.y / V_HEIGHT) * 100}%`,
+              filter: 'drop-shadow(2px 5px 4px rgba(0,0,0,0.25))',
+            }}
+          >
+            <svg
+              width="38"
+              height="64"
+              viewBox="0 0 42 70"
+              fill="none"
+              style={{ transform: 'translate(-6px, -62px)' }}
             >
-              ✍️ {activeTeacher.name} escribe...
-            </span>
+              {/* Marker Body */}
+              <rect x="14" y="6" width="14" height="42" rx="3" fill="#1e293b" />
+              <rect x="16" y="10" width="10" height="34" rx="2" fill={stylus.color} />
+              {/* Grip */}
+              <rect x="14" y="44" width="14" height="10" rx="1" fill="#0f172a" />
+              {/* Cone nib holder */}
+              <polygon points="15,54 27,54 23,63 19,63" fill="#cbd5e1" />
+              {/* Felt Tip (Point drawing the ink) */}
+              <polygon points="19,63 23,63 21,69" fill={stylus.color} />
+            </svg>
           </div>
+        )}
+
+        {/* KaTeX Math Overlay Elements */}
+        {renderedMath.map(item => (
+          <div
+            key={item.id}
+            className="absolute transform -translate-y-1/2 pointer-events-none select-none transition-opacity duration-300 z-10"
+            style={{
+              left: `${(item.x / V_WIDTH) * 100}%`,
+              top: `${(item.y / V_HEIGHT) * 100}%`,
+              color:
+                item.color || (boardStyle === 'chalkboard' ? '#f8fafc' : '#0f172a'),
+              transform: `scale(${item.scale || 1.1})`,
+              transformOrigin: 'left center',
+            }}
+            dangerouslySetInnerHTML={{ __html: item.html }}
+          />
+        ))}
+
+        {/* Aluminum Bottom Tray with Markers and Eraser */}
+        <div
+          className={`absolute bottom-0 left-0 right-0 h-4 z-10 flex items-center justify-end px-6 gap-2 border-t ${
+            boardStyle === 'chalkboard'
+              ? 'bg-amber-950/90 border-amber-900'
+              : 'bg-slate-200 border-slate-300'
+          }`}
+        >
+          {boardStyle === 'chalkboard' ? (
+            <>
+              <div className="w-8 h-2 rounded-sm bg-white/90 shadow-sm transform -rotate-2" />
+              <div className="w-7 h-2 rounded-sm bg-yellow-200/90 shadow-sm transform rotate-1" />
+              <div className="w-6 h-2 rounded-sm bg-cyan-200/90 shadow-sm" />
+              <div className="w-12 h-3 rounded bg-amber-900 border border-amber-800 text-[8px] text-amber-200 flex items-center justify-center font-bold">
+                BORRADOR
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-9 h-2.5 rounded-full bg-slate-900 shadow-sm" />
+              <div className="w-9 h-2.5 rounded-full bg-blue-600 shadow-sm" />
+              <div className="w-9 h-2.5 rounded-full bg-red-600 shadow-sm" />
+              <div className="w-9 h-2.5 rounded-full bg-emerald-600 shadow-sm" />
+              <div className="w-12 h-3 rounded bg-slate-700 text-[8px] text-white flex items-center justify-center font-bold shadow-sm">
+                BORRADOR
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

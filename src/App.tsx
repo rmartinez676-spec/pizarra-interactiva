@@ -48,6 +48,13 @@ export function App() {
 
   // Focus coordinate for hand pointer
   const [focusCoord, setFocusCoord] = useState<[number, number] | undefined>(undefined);
+  const [audioTested, setAudioTested] = useState(false);
+
+  const handleTestAudio = () => {
+    speechService.testAudioSound(() => {
+      setAudioTested(true);
+    });
+  };
 
   const currentStep = currentLesson.steps[currentStepIndex] || currentLesson.steps[0];
   const stopSpeechRef = useRef<(() => void) | null>(null);
@@ -270,8 +277,20 @@ export function App() {
             </div>
           </div>
 
-          {/* Action Button */}
+          {/* Action Buttons */}
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleTestAudio}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-sm ${
+                audioTested
+                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                  : 'bg-blue-950/60 hover:bg-blue-900 border-blue-500/50 text-blue-300'
+              }`}
+              title="Probar sonido y desbloquear el sintetizador de voz del navegador"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>{audioTested ? 'Audio OK ✓' : '🔊 Probar Voz'}</span>
+            </button>
             <button
               onClick={() => setIsAskModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs md:text-sm font-bold shadow-lg shadow-blue-600/20 transition-all transform active:scale-95"
@@ -319,6 +338,46 @@ export function App() {
                 <Send className="w-4 h-4" />
               </button>
             </form>
+
+            {/* Quick Direct Topic Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-3">
+              <span className="text-[11px] text-slate-400 font-semibold">Temas directos:</span>
+              <button
+                type="button"
+                onClick={() => handleQuerySubmit('Contratos Menores', 'topic')}
+                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                📄 Contratos Menores (LCSP)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuerySubmit('La Corona y el Refrendo', 'topic')}
+                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                👑 La Corona (Arts. 56 y 64 CE)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuerySubmit('Silencio Administrativo', 'topic')}
+                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                ⏳ Silencio Positivo vs Negativo
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuerySubmit('Nulidad de Pleno Derecho y Anulabilidad', 'topic')}
+                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                ⚖️ Nulidad (Art. 47) vs Anulabilidad (Art. 48)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuerySubmit('Recurso de Alzada y Reposición', 'topic')}
+                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                📑 Alzada vs Reposición
+              </button>
+            </div>
           </div>
         </div>
 

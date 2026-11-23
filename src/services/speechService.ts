@@ -148,6 +148,13 @@ class SpeechService {
     };
 
     this.currentUtterance = utterance;
+    // Chromium garbage collection bug fix: retain global reference
+    if (typeof window !== 'undefined') {
+      (window as any)._activeSpeechUtterance = utterance;
+    }
+    try {
+      this.synth.resume();
+    } catch {}
     this.synth.speak(utterance);
 
     return () => {
@@ -155,22 +162,72 @@ class SpeechService {
     };
   }
 
+  public testAudioSound(onDone?: () => void) {
+    if (typeof window === 'undefined') return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const audioCtx = new AudioCtx();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = 587.33; // D5 tone
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      }
+    } catch (e) {
+      console.warn('AudioContext chime failed:', e);
+    }
+
+    if (this.synth) {
+      try {
+        this.synth.cancel();
+        this.synth.resume();
+      } catch {}
+      const testU = new SpeechSynthesisUtterance('Audio activado. La voz y la pizarra están listas.');
+      testU.lang = 'es-ES';
+      testU.rate = 1.05;
+      (window as any)._activeSpeechUtterance = testU;
+      testU.onend = () => {
+        onDone?.();
+      };
+      testU.onerror = () => {
+        onDone?.();
+      };
+      this.synth.speak(testU);
+    } else {
+      onDone?.();
+    }
+  }
+
   public stop() {
     if (this.synth) {
-      this.synth.cancel();
+      try {
+        this.synth.cancel();
+      } catch {}
       this.currentUtterance = null;
+      if (typeof window !== 'undefined') {
+        (window as any)._activeSpeechUtterance = null;
+      }
     }
   }
 
   public pause() {
     if (this.synth) {
-      this.synth.pause();
+      try {
+        this.synth.pause();
+      } catch {}
     }
   }
 
   public resume() {
     if (this.synth) {
-      this.synth.resume();
+      try {
+        this.synth.resume();
+      } catch {}
     }
   }
 }
