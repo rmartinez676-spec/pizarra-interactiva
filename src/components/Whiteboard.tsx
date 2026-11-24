@@ -274,6 +274,11 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           break;
         }
 
+        case 'curve': {
+          drawCurveInstant(ctx, cmd);
+          break;
+        }
+
         case 'graph': {
           drawCartesianGraph(ctx, cmd, boardStyle);
           break;
@@ -407,6 +412,37 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           break;
         }
 
+        case 'circle': {
+          const circleColor = cmd.color || (boardStyle === 'chalkboard' ? '#facc15' : '#ea580c');
+          animateCircleStroke(
+            ctx,
+            cmd.x,
+            cmd.y,
+            cmd.radiusX,
+            cmd.radiusY || cmd.radiusX,
+            circleColor,
+            cmd.label,
+            runNextCommand
+          );
+          break;
+        }
+
+        case 'curve': {
+          const curveColor = cmd.color || '#2563eb';
+          animateCurveStroke(
+            ctx,
+            cmd.points,
+            curveColor,
+            cmd.lineWidth || 3,
+            cmd.dashed,
+            cmd.closed,
+            cmd.fill,
+            cmd.label,
+            runNextCommand
+          );
+          break;
+        }
+
         case 'arrow': {
           const arrowColor = cmd.color || '#dc2626';
           animateArrowStroke(
@@ -416,7 +452,24 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             cmd.to[0],
             cmd.to[1],
             arrowColor,
-            runNextCommand
+            () => {
+              if (cmd.label) {
+                const midX = (cmd.from[0] + cmd.to[0]) / 2;
+                const midY = (cmd.from[1] + cmd.to[1]) / 2 - 8;
+                animateTextHandwriting(
+                  ctx,
+                  cmd.label,
+                  midX,
+                  midY,
+                  14,
+                  arrowColor,
+                  'Patrick Hand',
+                  runNextCommand
+                );
+              } else {
+                runNextCommand();
+              }
+            }
           );
           break;
         }
@@ -453,13 +506,15 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
         case 'graph': {
           drawCartesianGraph(ctx, cmd, boardStyle);
-          runNextCommand();
+          setStylus({ x: cmd.x + cmd.width, y: cmd.y + cmd.height / 2, color: '#2563eb', visible: true });
+          setTimeout(runNextCommand, 220);
           break;
         }
 
         case 'diagram': {
           drawPredefinedDiagram(ctx, cmd, boardStyle);
-          runNextCommand();
+          setStylus({ x: cmd.x + cmd.width / 2, y: cmd.y + cmd.height / 2, color: '#2563eb', visible: true });
+          setTimeout(runNextCommand, 260);
           break;
         }
 
@@ -617,6 +672,179 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         animateLineStroke(ctx, x2, y2, h2X, h2Y, color, 2.5, onDone);
       });
     });
+  };
+
+  const animateCircleStroke = (
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    color: string,
+    label?: string,
+    onDone?: () => void
+  ) => {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.8;
+    ctx.lineCap = 'round';
+
+    let progress = 0;
+    const steps = 28;
+    let prevX = cx + rx;
+    let prevY = cy;
+
+    const step = () => {
+      if (cancelAnimRef.current) {
+        ctx.restore();
+        return;
+      }
+      progress++;
+      const angle = (progress / steps) * Math.PI * 2;
+      const curX = cx + rx * Math.cos(angle);
+      const curY = cy + ry * Math.sin(angle);
+
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(curX, curY);
+      ctx.stroke();
+
+      prevX = curX;
+      prevY = curY;
+      setStylus({ x: curX, y: curY, color, visible: true });
+
+      if (progress < steps) {
+        setTimeout(step, 14);
+      } else {
+        ctx.restore();
+        if (label) {
+          animateTextHandwriting(
+            ctx,
+            label,
+            cx - rx + 12,
+            cy + 5,
+            15,
+            color,
+            'Patrick Hand',
+            () => onDone?.()
+          );
+        } else {
+          onDone?.();
+        }
+      }
+    };
+
+    step();
+  };
+
+  function drawCurveInstant(
+    ctx: CanvasRenderingContext2D,
+    cmd: Extract<BoardCommand, { type: 'curve' }>
+  ) {
+    if (!cmd.points || cmd.points.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = cmd.color || '#2563eb';
+    ctx.lineWidth = cmd.lineWidth || 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (cmd.dashed) ctx.setLineDash([8, 6]);
+
+    ctx.beginPath();
+    ctx.moveTo(cmd.points[0][0], cmd.points[0][1]);
+    for (let i = 1; i < cmd.points.length; i++) {
+      ctx.lineTo(cmd.points[i][0], cmd.points[i][1]);
+    }
+    if (cmd.closed) ctx.closePath();
+    if (cmd.fill) {
+      ctx.fillStyle = cmd.fill;
+      ctx.fill();
+    }
+    ctx.stroke();
+
+    if (cmd.label) {
+      const mid = cmd.points[Math.floor(cmd.points.length / 2)];
+      ctx.setLineDash([]);
+      ctx.font = '700 14px "Patrick Hand", cursive';
+      ctx.fillStyle = cmd.color || '#2563eb';
+      ctx.fillText(cmd.label, mid[0] + 8, mid[1] - 8);
+    }
+    ctx.restore();
+  }
+
+  const animateCurveStroke = (
+    ctx: CanvasRenderingContext2D,
+    points: [number, number][],
+    color: string,
+    lineWidth: number,
+    dashed?: boolean,
+    closed?: boolean,
+    fill?: string,
+    label?: string,
+    onDone?: () => void
+  ) => {
+    if (!points || points.length < 2) {
+      onDone?.();
+      return;
+    }
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (dashed) ctx.setLineDash([8, 6]);
+
+    let idx = 1;
+    const step = () => {
+      if (cancelAnimRef.current) {
+        ctx.restore();
+        return;
+      }
+      if (idx < points.length) {
+        const [x1, y1] = points[idx - 1];
+        const [x2, y2] = points[idx];
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        setStylus({ x: x2, y: y2, color, visible: true });
+        idx++;
+        setTimeout(step, 24);
+      } else {
+        if (closed && points.length > 2) {
+          ctx.beginPath();
+          ctx.moveTo(points[points.length - 1][0], points[points.length - 1][1]);
+          ctx.lineTo(points[0][0], points[0][1]);
+          ctx.stroke();
+        }
+        if (fill) {
+          ctx.beginPath();
+          ctx.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+          ctx.closePath();
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+        ctx.restore();
+        if (label) {
+          const mid = points[Math.floor(points.length / 2)];
+          animateTextHandwriting(
+            ctx,
+            label,
+            mid[0] + 8,
+            mid[1] - 8,
+            14,
+            color,
+            'Patrick Hand',
+            () => onDone?.()
+          );
+        } else {
+          onDone?.();
+        }
+      }
+    };
+
+    step();
   };
 
   // STUDENT DRAWING HANDLERS

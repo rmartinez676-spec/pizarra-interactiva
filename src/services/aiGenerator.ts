@@ -38,24 +38,24 @@ export async function answerStudentInterruption(params: {
 
   if (apiKey && apiKey.trim().length > 8) {
     try {
-      const prompt = `Eres un tutor estilo Ahaboard que explica paso a paso dibujando en una pizarra blanca (coordenadas 0..1000 x 0..580).
+      const prompt = `Eres ahaboard, un tutor que DIBUJA en una pizarra blanca (coordenadas 0..1000 x 0..580).
 Estabas explicando "${lessonTitle}" (paso: "${currentStepTitle}", decías: "${currentSpeech}").
 El estudiante te ha interrumpido con: "${question}".
 
-Responde de tú a tú, claro, cercano y pedagógico, y añade 1 a 3 comandos de dibujo para aclarar la duda en la zona inferior o lateral de la pizarra (y entre 380 y 520, x entre 50 y 940) sin borrar lo anterior.
-Devuelve ÚNICAMENTE JSON válido con este formato:
+Responde de tú a tú, claro y cercano, y DIBUJA en la zona inferior (y entre 370 y 530) usando flechas ("arrow"), círculos ("circle"), curvas ("curve") y anotaciones cortas ("text") sin borrar lo anterior. No uses cajas rectangulares aburridas.
+Devuelve ÚNICAMENTE JSON válido:
 {
   "speech": "Texto que dirás en voz alta respondiendo directamente al estudiante",
   "commands": [
-    { "id": "int-1", "type": "box", "x": 50, "y": 370, "width": 890, "height": 140, "color": "#7c3aed", "label": "Aclaración" },
-    { "id": "int-2", "type": "text", "text": "• Punto clave...", "x": 70, "y": 415, "size": 16, "color": "#0f172a", "style": "bold" }
+    { "id": "int-1", "type": "arrow", "from": [80, 410], "to": [180, 450], "color": "#7c3aed" },
+    { "id": "int-2", "type": "text", "text": "Aclaración visual...", "x": 195, "y": 455, "size": 17, "color": "#4c1d95", "style": "bold" }
   ]
 }`;
 
       const raw = await callRawJsonLlm(prompt, apiKey, provider || 'gemini');
       const parsed = JSON.parse(raw);
       return {
-        speech: parsed.speech || 'Buena pregunta. Te lo aclaro aquí mismo en la pizarra.',
+        speech: parsed.speech || 'Buena pregunta. Te lo dibujo aquí mismo en la pizarra.',
         commands: Array.isArray(parsed.commands) ? parsed.commands : [],
       };
     } catch (e) {
@@ -63,12 +63,10 @@ Devuelve ÚNICAMENTE JSON válido con este formato:
     }
   }
 
-  // Smart local fallback for interruptions
+  // Smart local fallback for interruptions (draws arrow + circle + handwritten note)
   const lowerQ = question.toLowerCase();
-  let replySpeech = `¡Excelente pregunta! Sobre "${question}", fíjate en la pizarra: lo más importante es no perder de vista la regla clave del apartado actual (${currentStepTitle}).`;
-  if (lowerQ.includes('ejemplo') || lowerQ.includes('no entiendo') || lowerQ.includes('otra forma')) {
-    replySpeech = `¡Claro! Te lo explico de otra forma más sencilla. Imagina el caso práctico más directo de ${lessonTitle}: quédate con la idea central que acabo de anotar abajo en morado.`;
-  } else if (lowerQ.includes('a la vez') || lowerQ.includes('mismo tiempo') || lowerQ.includes('iguales')) {
+  let replySpeech = `¡Buena pregunta! Para responderte sobre "${question}" con total libertad y dibujarte esquemas nuevos a medida, conecta tu clave gratuita de Gemini arriba en "Conectar IA". Mientras tanto, quédate con esta flecha clave en morado.`;
+  if (lowerQ.includes('a la vez') || lowerQ.includes('mismo tiempo') || lowerQ.includes('iguales')) {
     replySpeech = `¡Exacto! Llegan exactamente a la vez porque la gravedad tira hacia abajo con la misma aceleración para las dos.`;
   }
 
@@ -76,21 +74,28 @@ Devuelve ÚNICAMENTE JSON válido con este formato:
     speech: replySpeech,
     commands: [
       {
-        id: 'int-box-' + Date.now(),
-        type: 'box',
-        x: 50,
-        y: 375,
-        width: 900,
-        height: 110,
+        id: 'int-arrow-' + Date.now(),
+        type: 'arrow',
+        from: [70, 420],
+        to: [160, 470],
         color: '#7c3aed',
-        label: `💬 Aclaración en vivo: "${question.slice(0, 45)}"`,
+        label: 'Mira aquí',
+      },
+      {
+        id: 'int-circle-' + Date.now(),
+        type: 'circle',
+        x: 520,
+        y: 470,
+        radiusX: 340,
+        radiusY: 32,
+        color: '#7c3aed',
       },
       {
         id: 'int-txt-' + Date.now(),
         type: 'text',
-        text: `➔ ${replySpeech.slice(0, 92)}${replySpeech.length > 92 ? '...' : ''}`,
-        x: 70,
-        y: 425,
+        text: `${replySpeech.slice(0, 78)}${replySpeech.length > 78 ? '...' : ''}`,
+        x: 200,
+        y: 476,
         size: 16,
         color: '#4c1d95',
         style: 'bold',
@@ -158,11 +163,19 @@ async function callLlmWithStructuredOutput(req: GenerationRequest): Promise<Less
       ? 'Modo TAREA: Guía paso a paso dando pistas socráticas sin regalar la respuesta final de golpe.'
       : 'Modo TEMA: Explica el concepto de raíz a fondo con esquemas visuales, comparaciones y claridad.';
 
-  const systemPrompt = `Eres ahaboard, un tutor experto de IA con pizarra blanca interactiva (coordenadas del canvas: ancho 1000, alto 580).
+  const systemPrompt = `Eres ahaboard, un tutor experto que DIBUJA VISUALMENTE cada concepto en una pizarra blanca (canvas 1000x580).
 El alumno quiere aprender: "${req.query}".
 ${modeInstructions}${attachmentSection}
 
-Debes estructurar una lección en formato JSON estricto con esta estructura:
+REGLA DE ORO DE LA PIZARRA (MUY IMPORTANTE):
+¡NO hagas diapositivas aburridas con cajas rectangulares llenas de texto! Dibuja como un profesor humano con rotuladores de colores:
+- Usa "curve" con arrays de puntos [[x1,y1],[x2,y2],...] para dibujar curvas, arcos, montañas, líneas de tiempo, balanzas, pirámides, ondas, gráficas o trayectorias.
+- Usa "circle" para dibujar nodos, átomos, bolas, engranajes o rodear conceptos clave.
+- Usa "arrow" para conectar causas, fuerzas, flujos o consecuencias.
+- Usa "text" con anotaciones CORTAS a mano alzada justo al lado de cada dibujo.
+- Usa "diagram" (kind: "projectile" o "photosynthesis") cuando encaje con física o biología.
+
+Estructura JSON estricta:
 {
   "title": "Título claro de la clase",
   "topic": "Asignatura o materia",
@@ -171,12 +184,13 @@ Debes estructurar una lección en formato JSON estricto con esta estructura:
     {
       "id": "step-1",
       "title": "Nombre del paso",
-      "speech": "Locución natural, cercana y didáctica en español que dirás en voz alta mientras dibujas este paso.",
+      "speech": "Explicación natural, cercana y didáctica en español que dirás en voz alta mientras dibujas este paso.",
       "commands": [
         { "id": "c1", "type": "clear" },
-        { "id": "c2", "type": "title", "text": "Título en pizarra", "subtitle": "Subtítulo breve", "x": 50, "y": 42, "color": "#1e3a8a" },
-        { "id": "c3", "type": "box", "x": 50, "y": 90, "width": 430, "height": 250, "color": "#2563eb", "label": "1. Concepto Clave" },
-        { "id": "c4", "type": "text", "text": "• Dato concreto 1", "x": 70, "y": 135, "size": 16, "color": "#0f172a", "style": "bold" }
+        { "id": "c2", "type": "title", "text": "Título en pizarra", "subtitle": "Idea visual", "x": 50, "y": 42, "color": "#1e3a8a" },
+        { "id": "c3", "type": "curve", "points": [[100,320],[220,180],[350,150],[480,220],[600,350]], "color": "#2563eb", "lineWidth": 3, "label": "Trayectoria" },
+        { "id": "c4", "type": "circle", "x": 220, "y": 180, "radiusX": 22, "color": "#dc2626" },
+        { "id": "c5", "type": "arrow", "from": [220, 205], "to": [220, 290], "color": "#dc2626", "label": "Fuerza" }
       ],
       "socratic": {
         "prompt": "Pregunta directa al estudiante para comprobar que lo entiende",
@@ -196,11 +210,9 @@ Debes estructurar una lección en formato JSON estricto con esta estructura:
   ]
 }
 
-Reglas de dibujo en pizarra (1000x580):
-- Tipos de commands permitidos: "clear", "title", "text", "box", "arrow" (from:[x,y], to:[x,y]), "highlight" (x,y,width,height,color).
-- No superpongas textos. Usa x entre 50 y 920, y entre 40 y 520.
-- Crea 2 o 3 pasos progresivos (en el paso 2 y 3 NO pongas "clear" para que se vaya completando la misma pizarra!).
-- Sé concreto, riguroso y didáctico, nunca pongas texto genérico de relleno.
+Reglas de coordenadas (1000x580):
+- Tipos permitidos: "clear", "title", "text", "curve", "circle", "arrow", "highlight", "box" (úsalo solo para destacar una fórmula o regla final, nunca para listas largas).
+- Crea 2 o 3 pasos progresivos (en el paso 2 y 3 NO pongas "clear" para que se siga dibujando sobre la misma pizarra).
 Responde ÚNICAMENTE con el JSON válido.`;
 
   const raw = await callRawJsonLlm(systemPrompt, req.apiKey!, req.provider || 'gemini');
@@ -687,10 +699,175 @@ function createUniversalLessonFromTopic(
   );
 
   if (matched) {
+    // Custom animated visual drawings for Physics / Economics / Calculus showcase topics
+    const isPhysics = matched.keywords.includes('balon');
+    const isCompound = matched.keywords.includes('interes');
+    const isCalculus = matched.keywords.includes('derivada');
+
+    if (isPhysics) {
+      const steps: LessonStep[] = [
+        {
+          id: 'step-1',
+          title: '1. Trayectoria y Fuerzas del Balón',
+          speech: matched.speech1,
+          writingFocusCoord: [300, 180],
+          commands: [
+            { id: 'p-clear', type: 'clear' },
+            { id: 'p-title', type: 'title', text: matched.title, subtitle: matched.topic, x: 50, y: 40, color: '#1e3a8a' },
+            // Ground line
+            { id: 'p-ground', type: 'curve', points: [[60, 360], [920, 360]], color: '#64748b', lineWidth: 3 },
+            // Ball at kick point
+            { id: 'p-ball1', type: 'circle', x: 110, y: 342, radiusX: 16, color: '#0f172a' },
+            // Parabolic curve
+            {
+              id: 'p-arc',
+              type: 'curve',
+              points: [[110, 342], [180, 220], [280, 145], [400, 125], [520, 155], [630, 240], [710, 342]],
+              color: '#2563eb',
+              lineWidth: 3.5,
+              dashed: true,
+              label: 'Curva parabólica',
+            },
+            // Velocity forward arrow (constant)
+            { id: 'p-vx', type: 'arrow', from: [400, 125], to: [510, 125], color: '#059669', label: 'vx constante (sin empuje)' },
+            // Gravity arrow down
+            { id: 'p-g', type: 'arrow', from: [400, 125], to: [400, 220], color: '#dc2626', label: 'Gravedad ↓' },
+          ],
+          socratic: matched.socratic,
+        },
+        {
+          id: 'step-2',
+          title: '2. Experimento: Bola A vs Bola B',
+          speech: matched.speech2,
+          writingFocusCoord: [780, 200],
+          commands: [
+            // Cliff/table on the right
+            { id: 'p-table', type: 'curve', points: [[740, 210], [800, 210], [800, 360]], color: '#334155', lineWidth: 3.5 },
+            // Ball A falling straight
+            { id: 'p-ballA', type: 'circle', x: 820, y: 200, radiusX: 10, color: '#2563eb' },
+            { id: 'p-dropA', type: 'arrow', from: [820, 212], to: [820, 350], color: '#2563eb', label: 'A' },
+            // Ball B thrown sideways
+            { id: 'p-ballB', type: 'circle', x: 845, y: 200, radiusX: 10, color: '#dc2626' },
+            { id: 'p-arcB', type: 'curve', points: [[845, 200], [890, 215], [930, 270], [955, 350]], color: '#dc2626', lineWidth: 2.5, dashed: true, label: 'B' },
+            { id: 'p-same', type: 'text', text: '✓ A y B llegan AL MISMO TIEMPO', x: 520, y: 425, size: 20, color: '#059669', style: 'bold' },
+            { id: 'p-sum', type: 'text', text: matched.summaryRule, x: 60, y: 480, size: 16, color: '#1e3a8a', style: 'bold' },
+          ],
+        },
+      ];
+      return {
+        id: 'lesson-' + Date.now(),
+        title: matched.title,
+        topic: matched.topic,
+        category: 'Física',
+        mode,
+        teacherId,
+        description: matched.title,
+        steps,
+        flashcards: matched.flashcards.map((f, i) => ({ id: `fc-${i}`, ...f })),
+        quiz: [{ id: 'qz-1', ...matched.quiz }],
+      };
+    }
+
+    if (isCompound) {
+      const steps: LessonStep[] = [
+        {
+          id: 'step-1',
+          title: '1. Crecimiento Lineal vs Exponencial',
+          speech: matched.speech1,
+          writingFocusCoord: [300, 200],
+          commands: [
+            { id: 'e-clear', type: 'clear' },
+            { id: 'e-title', type: 'title', text: matched.title, subtitle: matched.topic, x: 50, y: 40, color: '#1e3a8a' },
+            // Axes
+            { id: 'e-y', type: 'arrow', from: [110, 380], to: [110, 110], color: '#334155', label: 'Dinero (€)' },
+            { id: 'e-x', type: 'arrow', from: [110, 380], to: [650, 380], color: '#334155', label: 'Tiempo (años)' },
+            // Simple interest straight line
+            { id: 'e-simple', type: 'curve', points: [[110, 350], [250, 325], [400, 300], [580, 270]], color: '#64748b', lineWidth: 3, dashed: true, label: 'Interés Simple (recta)' },
+            // Compound interest exponential curve
+            { id: 'e-comp', type: 'curve', points: [[110, 350], [220, 330], [340, 290], [450, 225], [540, 145], [590, 105]], color: '#059669', lineWidth: 4, label: 'Interés Compuesto (bola de nieve)' },
+          ],
+          socratic: matched.socratic,
+        },
+        {
+          id: 'step-2',
+          title: '2. Fórmula y Regla del 72',
+          speech: matched.speech2,
+          writingFocusCoord: [700, 220],
+          commands: [
+            { id: 'e-c1', type: 'circle', x: 790, y: 185, radiusX: 135, radiusY: 45, color: '#2563eb', label: 'C = C₀ · (1 + r)ᵗ' },
+            { id: 'e-arr', type: 'arrow', from: [790, 232], to: [790, 290], color: '#dc2626', label: 'Exponente t' },
+            { id: 'e-r72', type: 'text', text: 'Regla del 72: 72 ÷ tasa% = años para duplicar', x: 580, y: 330, size: 17, color: '#047857', style: 'bold' },
+            { id: 'e-sum', type: 'text', text: `🎯 ${matched.summaryRule}`, x: 60, y: 450, size: 16, color: '#1e3a8a', style: 'bold' },
+          ],
+        },
+      ];
+      return {
+        id: 'lesson-' + Date.now(),
+        title: matched.title,
+        topic: matched.topic,
+        category: 'Matemáticas',
+        mode,
+        teacherId,
+        description: matched.title,
+        steps,
+        flashcards: matched.flashcards.map((f, i) => ({ id: `fc-${i}`, ...f })),
+        quiz: [{ id: 'qz-1', ...matched.quiz }],
+      };
+    }
+
+    if (isCalculus) {
+      const steps: LessonStep[] = [
+        {
+          id: 'step-1',
+          title: '1. La Recta Tangente',
+          speech: matched.speech1,
+          writingFocusCoord: [300, 200],
+          commands: [
+            { id: 'd-clear', type: 'clear' },
+            { id: 'd-title', type: 'title', text: matched.title, subtitle: matched.topic, x: 50, y: 40, color: '#1e3a8a' },
+            { id: 'd-y', type: 'arrow', from: [120, 380], to: [120, 110], color: '#334155', label: 'f(x)' },
+            { id: 'd-x', type: 'arrow', from: [120, 380], to: [640, 380], color: '#334155', label: 'x' },
+            // Smooth curve
+            { id: 'd-curve', type: 'curve', points: [[140, 350], [230, 320], [340, 250], [450, 150], [560, 110]], color: '#2563eb', lineWidth: 3.5, label: 'Curva f(x)' },
+            // Point of tangency
+            { id: 'd-pt', type: 'circle', x: 340, y: 250, radiusX: 8, color: '#dc2626' },
+            // Tangent line
+            { id: 'd-tan', type: 'curve', points: [[210, 345], [340, 250], [470, 155]], color: '#dc2626', lineWidth: 2.5, dashed: true, label: "Tangente = f'(x)" },
+          ],
+          socratic: matched.socratic,
+        },
+        {
+          id: 'step-2',
+          title: '2. Máximos y Mínimos (f\'(x) = 0)',
+          speech: matched.speech2,
+          writingFocusCoord: [750, 200],
+          commands: [
+            { id: 'd-hill', type: 'curve', points: [[660, 310], [720, 210], [780, 175], [840, 210], [900, 310]], color: '#059669', lineWidth: 3 },
+            { id: 'd-top', type: 'circle', x: 780, y: 175, radiusX: 8, color: '#dc2626' },
+            { id: 'd-flat', type: 'curve', points: [[710, 175], [850, 175]], color: '#dc2626', lineWidth: 2.5, label: "Pendiente = 0" },
+            { id: 'd-sum', type: 'text', text: `🎯 ${matched.summaryRule}`, x: 60, y: 455, size: 16, color: '#1e3a8a', style: 'bold' },
+          ],
+        },
+      ];
+      return {
+        id: 'lesson-' + Date.now(),
+        title: matched.title,
+        topic: matched.topic,
+        category: 'Matemáticas',
+        mode,
+        teacherId,
+        description: matched.title,
+        steps,
+        flashcards: matched.flashcards.map((f, i) => ({ id: `fc-${i}`, ...f })),
+        quiz: [{ id: 'qz-1', ...matched.quiz }],
+      };
+    }
+
+    // Visual hand-drawn node & arrow layout (no rigid boxes) for Law & Opposition topics
     const steps: LessonStep[] = [
       {
         id: 'step-1',
-        title: '1. Esquema Fundamental y Normativa',
+        title: '1. Mapa Visual y Claves',
         speech: matched.speech1,
         writingFocusCoord: [250, 90],
         commands: [
@@ -699,47 +876,35 @@ function createUniversalLessonFromTopic(
             id: 'b1-title',
             type: 'title',
             text: matched.title,
-            subtitle: `${matched.topic} • Enfoque de Examen y Oposiciones`,
+            subtitle: `${matched.topic}`,
             x: 50,
             y: 40,
             color: '#1e3a8a',
           },
-          {
-            id: 'b1-box1',
-            type: 'box',
-            x: 50,
-            y: 90,
-            width: 430,
-            height: 260,
-            color: '#2563eb',
-            label: matched.box1Label,
-          },
+          // Left hand-drawn node + underline
+          { id: 'b1-node1', type: 'circle', x: 185, y: 112, radiusX: 135, radiusY: 22, color: '#2563eb' },
+          { id: 'b1-lbl1', type: 'text', text: matched.box1Label, x: 70, y: 118, size: 15, color: '#1e3a8a', style: 'bold' },
           ...matched.box1Lines.map((line, idx) => ({
             id: `b1-line1-${idx}`,
             type: 'text' as const,
             text: line.text,
-            x: 70,
-            y: 135 + idx * 38,
+            x: 55,
+            y: 162 + idx * 38,
             size: line.size,
             color: line.color,
             style: (line.bold ? 'bold' : 'clean') as any,
           })),
-          {
-            id: 'b1-box2',
-            type: 'box',
-            x: 510,
-            y: 90,
-            width: 440,
-            height: 260,
-            color: '#dc2626',
-            label: matched.box2Label,
-          },
+          // Connecting arrow from concept 1 to concept 2
+          { id: 'b1-conn', type: 'arrow', from: [455, 112], to: [515, 112], color: '#dc2626' },
+          // Right hand-drawn node
+          { id: 'b1-node2', type: 'circle', x: 700, y: 112, radiusX: 165, radiusY: 22, color: '#dc2626' },
+          { id: 'b1-lbl2', type: 'text', text: matched.box2Label, x: 555, y: 118, size: 15, color: '#b91c1c', style: 'bold' },
           ...matched.box2Lines.map((line, idx) => ({
             id: `b1-line2-${idx}`,
             type: 'text' as const,
             text: line.text,
-            x: 530,
-            y: 135 + idx * 38,
+            x: 525,
+            y: 162 + idx * 38,
             size: line.size,
             color: line.color,
             style: (line.bold ? 'bold' : 'clean') as any,
@@ -757,17 +922,17 @@ function createUniversalLessonFromTopic(
             id: 'b2-highlight',
             type: 'highlight',
             x: 50,
-            y: 380,
+            y: 385,
             width: 900,
-            height: 75,
+            height: 60,
             color: 'rgba(254, 240, 138, 0.65)',
           },
           {
             id: 'b2-summary',
             type: 'text',
             text: `🎯 REGLA DE ORO: ${matched.summaryRule}`,
-            x: 75,
-            y: 425,
+            x: 70,
+            y: 422,
             size: 16,
             color: '#0f172a',
             style: 'bold',

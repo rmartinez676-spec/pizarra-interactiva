@@ -29,7 +29,8 @@ export type CommandType =
   | 'graph'
   | 'diagram'
   | 'highlight'
-  | 'table';
+  | 'table'
+  | 'curve';
 
 export interface BaseCommand {
   id: string;
@@ -137,6 +138,16 @@ export interface TableCommand extends BaseCommand {
   width: number;
 }
 
+export interface CurveCommand extends BaseCommand {
+  type: 'curve';
+  points: [number, number][];
+  dashed?: boolean;
+  lineWidth?: number;
+  closed?: boolean;
+  fill?: string;
+  label?: string;
+}
+
 export type BoardCommand =
   | ClearCommand
   | TitleCommand
@@ -148,7 +159,8 @@ export type BoardCommand =
   | GraphCommand
   | DiagramCommand
   | HighlightCommand
-  | TableCommand;
+  | TableCommand
+  | CurveCommand;
 
 export interface SocraticCheck {
   prompt: string;
