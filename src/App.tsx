@@ -1,554 +1,849 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
-  BookOpen,
-  Download,
-  PlayCircle,
+  Paperclip,
   Volume2,
-  Send,
+  VolumeX,
+  ArrowLeft,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  RotateCcw,
+  Settings,
+  BookOpen,
+  X,
+  Check,
+  FileText,
 } from 'lucide-react';
-import type { Lesson, Teacher, TeacherId, BoardStyle } from './types';
-import { TEACHERS } from './data/teachers';
+import type {
+  AIConfig,
+  BoardCommand,
+  BoardStyle,
+  ChatMessage,
+  Lesson,
+  Teacher,
+  TeacherId,
+} from './types';
+import { TEACHERS, TEACHERS_LIST } from './data/teachers';
 import { PRESET_LESSONS } from './data/presetLessons';
 import { speechService } from './services/speechService';
-import { generateInteractiveLesson } from './services/aiGenerator';
+import {
+  answerStudentInterruption,
+  generateInteractiveLesson,
+} from './services/aiGenerator';
 import { Whiteboard } from './components/Whiteboard';
-import { TeacherAvatar } from './components/TeacherAvatar';
-import { ControlBar } from './components/ControlBar';
-import { TeacherPicker } from './components/TeacherPicker';
-import { SocraticModal } from './components/SocraticModal';
+import { LiveTutorChat } from './components/LiveTutorChat';
 import { PostLessonReview } from './components/PostLessonReview';
-import { AskModal } from './components/AskModal';
+import { AISettingsModal } from './components/AISettingsModal';
+
+const QUICK_IDEAS = [
+  { label: 'Física', query: '¿Por qué un balón pateado hace una curva?', mode: 'topic' as const },
+  { label: 'Economía', query: '¿Por qué el interés compuesto crece tan rápido?', mode: 'topic' as const },
+  { label: 'Cálculo', query: '¿Qué es realmente una derivada?', mode: 'topic' as const },
+  { label: 'Oposiciones', query: 'Contratos Menores en la LCSP (Art. 118)', mode: 'exam' as const },
+  { label: 'Constitución', query: 'La Corona y el Refrendo (Arts. 56 a 65 CE)', mode: 'exam' as const },
+  { label: 'Ley 39/2015', query: 'Silencio Administrativo Positivo vs Negativo', mode: 'exam' as const },
+  { label: 'Derecho', query: 'Nulidad (Art. 47) vs Anulabilidad (Art. 48)', mode: 'exam' as const },
+];
 
 export function App() {
-  // Active states
-  const [currentLesson, setCurrentLesson] = useState<Lesson>(PRESET_LESSONS[0]);
+  // Navigation View: 'home' (Ahaboard prompt landing) or 'classroom' (live split whiteboard)
+  const [view, setView] = useState<'home' | 'classroom'>('home');
+
+  // Home Prompt States
+  const [queryInput, setQueryInput] = useState('');
+  const [selectedMode, setSelectedMode] = useState<'topic' | 'exam' | 'homework'>('topic');
   const [activeTeacher, setActiveTeacher] = useState<Teacher>(
     TEACHERS.javier || Object.values(TEACHERS)[0]
   );
-  // Default to Whiteboard (Pizarra Blanca) as requested by user
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // AI Config (saved in localStorage)
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
+    try {
+      const saved = localStorage.getItem('ahaboard_ai_config');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { provider: 'gemini', apiKey: '' };
+  });
+  const [isAISettingsOpen, setIsAISettingsOpen] = useState(false);
+
+  // Audio & Classroom States
+  const [audioTested, setAudioTested] = useState(false);
   const [boardStyle, setBoardStyle] = useState<BoardStyle>('whiteboard');
-
-  // Direct syllabus topic input
-  const [inlineQuery, setInlineQuery] = useState('');
-
-  // Playback & Step states
+  const [currentLesson, setCurrentLesson] = useState<Lesson>(PRESET_LESSONS[0]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [extraCommands, setExtraCommands] = useState<BoardCommand[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isWriting, setIsWriting] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
-  const [isSocraticActive, setIsSocraticActive] = useState(false);
+  const [isWaitingForSocratic, setIsWaitingForSocratic] = useState(false);
   const [isLessonFinished, setIsLessonFinished] = useState(false);
-
-  // Modals
-  const [isAskModalOpen, setIsAskModalOpen] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const [isLoadingLesson, setIsLoadingLesson] = useState(false);
+  const [isGeneratingReply, setIsGeneratingReply] = useState(false);
 
-  // Focus coordinate for hand pointer
-  const [focusCoord, setFocusCoord] = useState<[number, number] | undefined>(undefined);
-  const [audioTested, setAudioTested] = useState(false);
+  // Live 1-on-1 Chat Thread
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+
+  const stopSpeechRef = useRef<(() => void) | null>(null);
+  const stepTimerRef = useRef<number | null>(null);
+
+  const currentStep = currentLesson.steps[currentStepIndex] || currentLesson.steps[0];
+
+  const handleSaveAIConfig = (newConfig: AIConfig) => {
+    setAiConfig(newConfig);
+    try {
+      localStorage.setItem('ahaboard_ai_config', JSON.stringify(newConfig));
+    } catch {}
+  };
 
   const handleTestAudio = () => {
+    speechService.unlockAudio();
     speechService.testAudioSound(() => {
       setAudioTested(true);
     });
   };
 
-  const currentStep = currentLesson.steps[currentStepIndex] || currentLesson.steps[0];
-  const stopSpeechRef = useRef<(() => void) | null>(null);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  // Sync teacher with lesson when lesson changes
-  const switchLesson = (lesson: Lesson) => {
-    stopSpeechRef.current?.();
-    speechService.stop();
-    setCurrentLesson(lesson);
-    const teacher = TEACHERS[lesson.teacherId] || TEACHERS.javier || Object.values(TEACHERS)[0];
-    setActiveTeacher(teacher);
-    setBoardStyle('whiteboard');
-    setCurrentStepIndex(0);
-    setIsPlaying(false);
-    setIsSpeaking(false);
-    setIsWriting(false);
-    setIsSocraticActive(false);
-    setIsLessonFinished(false);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      setAttachedFile({
+        name: file.name,
+        content: text || `Archivo adjunto: ${file.name}`,
+      });
+      if (!queryInput.trim()) {
+        setQueryInput(`Explícame mis apuntes de ${file.name.replace(/\.[^.]+$/, '')}`);
+      }
+    };
+    reader.readAsText(file);
   };
 
-  // Play / Speak active step
-  const executeStep = (stepIndex: number, autoStartSpeech: boolean = true) => {
-    const step = currentLesson.steps[stepIndex];
+  const clearTimersAndSpeech = () => {
+    if (stepTimerRef.current) {
+      window.clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+    stopSpeechRef.current?.();
+    speechService.stop();
+  };
+
+  // Run a specific step in the classroom (draws + speaks + posts to chat)
+  const executeStep = (lesson: Lesson, stepIndex: number, autoPlay: boolean = true) => {
+    const step = lesson.steps[stepIndex];
     if (!step) return;
 
-    stopSpeechRef.current?.();
-    speechService.stop();
-
-    setFocusCoord(step.writingFocusCoord || [300, 150]);
+    clearTimersAndSpeech();
+    setCurrentStepIndex(stepIndex);
+    setIsWaitingForSocratic(false);
     setIsWriting(true);
 
-    if (autoStartSpeech) {
-      setIsPlaying(true);
-      const cancelSpeech = speechService.speak(
-        step.speech,
-        activeTeacher,
-        playbackSpeed,
+    // Append teacher message to chat if not already the last message
+    setChatMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.sender === 'teacher' && last.text === step.speech) {
+        return prev;
+      }
+      return [
+        ...prev,
         {
-          onStart: () => {
-            setIsSpeaking(true);
-            setIsWriting(true);
-          },
-          onEnd: () => {
-            setIsSpeaking(false);
-            setIsWriting(false);
+          id: `msg-${step.id}-${Date.now()}`,
+          sender: 'teacher',
+          text: step.speech,
+          timestamp: Date.now(),
+        },
+      ];
+    });
 
-            // Check if step has Socratic check
-            if (step.socratic) {
-              setIsSocraticActive(true);
-              setIsPlaying(false);
-            } else {
-              // Auto advance if not last step
-              if (stepIndex < currentLesson.steps.length - 1) {
-                setTimeout(() => {
-                  setCurrentStepIndex(stepIndex + 1);
-                  executeStep(stepIndex + 1, true);
-                }, 1200);
-              } else {
-                setIsPlaying(false);
-                setIsLessonFinished(true);
-              }
-            }
-          },
-          onError: () => {
-            setIsSpeaking(false);
-            setIsWriting(false);
-          },
-        }
-      );
-      stopSpeechRef.current = cancelSpeech;
-    }
-  };
-
-  // Handle Play/Pause
-  const handleTogglePlay = () => {
-    if (isPlaying) {
-      stopSpeechRef.current?.();
-      speechService.stop();
+    if (!autoPlay) {
       setIsPlaying(false);
       setIsSpeaking(false);
-      setIsWriting(false);
-    } else {
-      executeStep(currentStepIndex, true);
+      return;
     }
-  };
 
-  // Handle Step change
-  const handleNextStep = () => {
-    if (currentStepIndex < currentLesson.steps.length - 1) {
-      const nextIdx = currentStepIndex + 1;
-      setCurrentStepIndex(nextIdx);
-      setIsSocraticActive(false);
-      executeStep(nextIdx, isPlaying);
-    } else {
-      setIsLessonFinished(true);
-    }
-  };
+    setIsPlaying(true);
+    const teacher = TEACHERS[lesson.teacherId] || activeTeacher;
+    const cancel = speechService.speak(step.speech, teacher, playbackSpeed, {
+      onStart: () => {
+        setIsSpeaking(true);
+        setIsWriting(true);
+      },
+      onEnd: () => {
+        setIsSpeaking(false);
+        setIsWriting(false);
 
-  const handlePrevStep = () => {
-    if (currentStepIndex > 0) {
-      const prevIdx = currentStepIndex - 1;
-      setCurrentStepIndex(prevIdx);
-      setIsSocraticActive(false);
-      executeStep(prevIdx, isPlaying);
-    }
-  };
-
-  const handleReplayStep = () => {
-    setIsSocraticActive(false);
-    executeStep(currentStepIndex, true);
-  };
-
-  // Handle Teacher change
-  const handleSelectTeacher = (teacher: Teacher) => {
-    setActiveTeacher(teacher);
-    speechService.stop();
-    setIsPlaying(false);
-    setIsSpeaking(false);
-    // Greet with teacher voice
-    speechService.speak(teacher.greeting, teacher, playbackSpeed, {
-      onStart: () => setIsSpeaking(true),
-      onEnd: () => setIsSpeaking(false),
+        if (step.socratic) {
+          setIsWaitingForSocratic(true);
+          setIsPlaying(false);
+          setChatMessages(prev => [
+            ...prev,
+            {
+              id: `soc-${step.id}-${Date.now()}`,
+              sender: 'teacher',
+              text: step.socratic!.prompt,
+              timestamp: Date.now(),
+              isQuestion: true,
+            },
+          ]);
+        } else if (stepIndex < lesson.steps.length - 1) {
+          stepTimerRef.current = window.setTimeout(() => {
+            executeStep(lesson, stepIndex + 1, true);
+          }, 900);
+        } else {
+          setIsPlaying(false);
+          setIsLessonFinished(true);
+          setChatMessages(prev => [
+            ...prev,
+            {
+              id: `done-${Date.now()}`,
+              sender: 'system',
+              text: 'Clase completada. Puedes preguntar cualquier duda o abrir el cuestionario rápido.',
+              timestamp: Date.now(),
+            },
+          ]);
+        }
+      },
+      onError: () => {
+        setIsSpeaking(false);
+        setIsWriting(false);
+      },
     });
+    stopSpeechRef.current = cancel;
   };
 
-  // Toggle Mute
-  const handleToggleMute = () => {
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    speechService.setMuted(nextMuted);
-  };
+  // Start a new class from Home or Quick Idea
+  const startLesson = async (
+    customQuery?: string,
+    customMode?: 'topic' | 'exam' | 'homework'
+  ) => {
+    const q = (customQuery ?? queryInput).trim();
+    if (!q && !attachedFile) return;
 
-  // Speed change
-  const handleChangeSpeed = (speed: number) => {
-    setPlaybackSpeed(speed);
-    if (isPlaying) {
-      executeStep(currentStepIndex, true);
-    }
-  };
+    // Crucial: unlock browser audio synchronously inside the click handler!
+    speechService.unlockAudio();
 
-  // Socratic passed
-  const handleSocraticPassed = () => {
-    setIsSocraticActive(false);
-    if (currentStepIndex < currentLesson.steps.length - 1) {
-      const nextIdx = currentStepIndex + 1;
-      setCurrentStepIndex(nextIdx);
-      executeStep(nextIdx, true);
-    } else {
-      setIsLessonFinished(true);
-    }
-  };
-
-  // Submit custom query
-  const handleQuerySubmit = async (query: string, mode: 'topic' | 'homework' | 'exam', teacherId?: TeacherId) => {
-    if (!query.trim()) return;
+    const modeToUse = customMode ?? selectedMode;
     setIsLoadingLesson(true);
+
     try {
-      const newLesson = await generateInteractiveLesson({
-        query: query.trim(),
-        mode,
-        teacherId: teacherId || activeTeacher.id,
+      const lesson = await generateInteractiveLesson({
+        query: q || attachedFile?.name || 'Tema de estudio',
+        mode: modeToUse,
+        teacherId: activeTeacher.id as TeacherId,
+        apiKey: aiConfig.apiKey,
+        provider: aiConfig.provider,
+        attachmentText: attachedFile?.content,
       });
-      setIsAskModalOpen(false);
-      setInlineQuery('');
-      switchLesson(newLesson);
-      setTimeout(() => {
-        executeStep(0, true);
-      }, 500);
+
+      clearTimersAndSpeech();
+      setCurrentLesson(lesson);
+      setExtraCommands([]);
+      setIsLessonFinished(false);
+      setShowReviewModal(false);
+      setChatMessages([
+        {
+          id: `sys-start-${Date.now()}`,
+          sender: 'system',
+          text: `${activeTeacher.name} ha abierto la pizarra · Modo ${
+            modeToUse === 'exam' ? 'Examen' : modeToUse === 'homework' ? 'Tarea' : 'Tema'
+          }`,
+          timestamp: Date.now(),
+        },
+      ]);
+      setView('classroom');
+
+      // Start step 0 immediately
+      executeStep(lesson, 0, true);
     } catch (e) {
-      console.error(e);
+      console.error('Error starting lesson:', e);
     } finally {
       setIsLoadingLesson(false);
     }
   };
 
-  // Download Board as PNG
-  const handleDownloadBoard = () => {
-    const canvas = document.querySelector('canvas');
-    if (!canvas) return;
-    const link = document.createElement('a');
-    link.download = `${currentLesson.title.slice(0, 25)}_pizarra.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+  // Handle Student Interruption or Chat Reply
+  const handleStudentMessage = async (text: string) => {
+    speechService.unlockAudio();
+    clearTimersAndSpeech();
+    setIsPlaying(false);
+    setIsSpeaking(false);
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        id: `stu-${Date.now()}`,
+        sender: 'student',
+        text,
+        timestamp: Date.now(),
+      },
+    ]);
+
+    // If tutor was waiting for a Socratic answer, check if they answered via text
+    if (isWaitingForSocratic && currentStep.socratic) {
+      const socratic = currentStep.socratic;
+      const lower = text.toLowerCase();
+      const correctOpt = socratic.options?.[socratic.correctIndex ?? 0]?.toLowerCase() || '';
+      const isLikelyCorrect =
+        (correctOpt && lower.includes(correctOpt.slice(0, 12))) ||
+        lower.includes('a la vez') ||
+        lower.includes('mismo tiempo') ||
+        lower.includes('congreso') ||
+        lower.includes('cero');
+
+      if (isLikelyCorrect) {
+        handleSocraticOption(socratic.correctIndex ?? 0, text, true);
+        return;
+      }
+    }
+
+    setIsGeneratingReply(true);
+    try {
+      const reply = await answerStudentInterruption({
+        question: text,
+        lessonTitle: currentLesson.title,
+        currentStepTitle: currentStep.title,
+        currentSpeech: currentStep.speech,
+        apiKey: aiConfig.apiKey,
+        provider: aiConfig.provider,
+      });
+
+      setExtraCommands(prev => [...prev, ...reply.commands]);
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: `rep-${Date.now()}`,
+          sender: 'teacher',
+          text: reply.speech,
+          timestamp: Date.now(),
+        },
+      ]);
+
+      setIsWriting(true);
+      const cancel = speechService.speak(reply.speech, activeTeacher, playbackSpeed, {
+        onStart: () => setIsSpeaking(true),
+        onEnd: () => {
+          setIsSpeaking(false);
+          setIsWriting(false);
+        },
+      });
+      stopSpeechRef.current = cancel;
+    } finally {
+      setIsGeneratingReply(false);
+    }
   };
 
-  // Gather all commands up to current step
-  const accumulatedCommands = currentLesson.steps
-    .slice(0, currentStepIndex + 1)
-    .flatMap(s => s.commands);
+  const handleSocraticOption = (index: number, optionText: string, skipUserBubble = false) => {
+    speechService.unlockAudio();
+    const socratic = currentStep.socratic;
+    if (!socratic) return;
 
-  // Clean up audio on unmount
+    if (!skipUserBubble) {
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: `stu-opt-${Date.now()}`,
+          sender: 'student',
+          text: optionText,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+
+    const isCorrect = index === socratic.correctIndex;
+    const feedback = isCorrect ? socratic.feedbackCorrect : socratic.feedbackRetry;
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        id: `fb-${Date.now()}`,
+        sender: 'teacher',
+        text: feedback,
+        timestamp: Date.now(),
+      },
+    ]);
+
+    if (isCorrect) {
+      setIsWaitingForSocratic(false);
+      const cancel = speechService.speak(feedback, activeTeacher, playbackSpeed, {
+        onStart: () => setIsSpeaking(true),
+        onEnd: () => {
+          setIsSpeaking(false);
+          if (currentStepIndex < currentLesson.steps.length - 1) {
+            stepTimerRef.current = window.setTimeout(() => {
+              executeStep(currentLesson, currentStepIndex + 1, true);
+            }, 800);
+          } else {
+            setIsLessonFinished(true);
+          }
+        },
+      });
+      stopSpeechRef.current = cancel;
+    } else {
+      const cancel = speechService.speak(feedback, activeTeacher, playbackSpeed, {
+        onStart: () => setIsSpeaking(true),
+        onEnd: () => setIsSpeaking(false),
+      });
+      stopSpeechRef.current = cancel;
+    }
+  };
+
+  const handleTogglePlay = () => {
+    speechService.unlockAudio();
+    if (isPlaying) {
+      clearTimersAndSpeech();
+      setIsPlaying(false);
+      setIsSpeaking(false);
+      setIsWriting(false);
+    } else {
+      executeStep(currentLesson, currentStepIndex, true);
+    }
+  };
+
+  const handleToggleMute = () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    speechService.setMuted(next);
+  };
+
   useEffect(() => {
     return () => {
-      speechService.stop();
+      clearTimersAndSpeech();
     };
   }, []);
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
-      {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md px-4 lg:px-8 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          {/* Logo & Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-400 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white font-black text-xl tracking-tight">
-              Aha!
+  const accumulatedCommands = [
+    ...currentLesson.steps.slice(0, currentStepIndex + 1).flatMap(s => s.commands),
+    ...extraCommands,
+  ];
+
+  // ============================================================================
+  // VIEW 1: HOME (Ahaboard.ai/es Style Clean Landing & Prompt)
+  // ============================================================================
+  if (view === 'home') {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
+        {/* Clean Minimal Navbar */}
+        <header className="w-full px-6 py-4 flex items-center justify-between max-w-6xl mx-auto">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-base shadow-md shadow-indigo-600/20">
+              aha
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-black tracking-tight text-slate-100 m-0">
-                  AhaTutor • Oposiciones y Temarios
-                </h1>
-                <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/30">
-                  Pizarra Blanca Interactiva
-                </span>
+            <span className="font-extrabold text-xl tracking-tight text-slate-900">
+              ahaboard <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full ml-1">ES</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleTestAudio}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                audioTested
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>{audioTested ? 'Voz lista ✓' : 'Probar voz'}</span>
+            </button>
+
+            <button
+              onClick={() => setIsAISettingsOpen(true)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                aiConfig.apiKey
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>{aiConfig.apiKey ? `IA: ${aiConfig.provider.toUpperCase()}` : 'Conectar IA'}</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Centered Hero + Prompt Box */}
+        <main className="flex-1 flex flex-col items-center justify-center px-4 py-8 max-w-3xl mx-auto w-full">
+          <div className="text-center space-y-3 mb-8">
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-slate-900 leading-tight">
+              ¿Te atascas? <span className="text-indigo-600">Te lo dibuja.</span>
+            </h1>
+            <p className="text-base md:text-lg text-slate-600 max-w-xl mx-auto leading-relaxed">
+              Tu tutor de IA con pizarra. Escribe una pregunta, tema de oposición o sube tus apuntes: te lo explica en voz alta y dibuja cada paso.
+            </p>
+          </div>
+
+          {/* Main Ahaboard Card */}
+          <div className="w-full bg-white border border-slate-200 rounded-3xl shadow-xl shadow-slate-200/60 p-4 md:p-5 space-y-4">
+            {/* Mode Tabs: Tema | Examen | Tarea */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="inline-flex bg-slate-100 p-1 rounded-xl">
+                {(
+                  [
+                    { id: 'topic', label: 'Tema' },
+                    { id: 'exam', label: 'Examen' },
+                    { id: 'homework', label: 'Tarea' },
+                  ] as const
+                ).map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSelectedMode(tab.id)}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      selectedMode === tab.id
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-              <p className="text-[11px] text-slate-400 m-0 hidden md:block">
-                Tu preparador personal escribiendo esquemas y explicando temas en pizarra blanca en vivo
-              </p>
+
+              <span className="text-[11px] text-slate-400 font-medium">
+                {selectedMode === 'topic' && 'Explicación visual paso a paso'}
+                {selectedMode === 'exam' && 'Puntos clave, trampas y cuestionario'}
+                {selectedMode === 'homework' && 'Pistas guiadas sin darte la respuesta'}
+              </span>
+            </div>
+
+            {/* Prompt Textarea */}
+            <textarea
+              rows={3}
+              value={queryInput}
+              onChange={e => setQueryInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  startLesson();
+                }
+              }}
+              placeholder="Escribe cualquier duda o tema... Ej: ¿Por qué un balón pateado hace una curva? o Contratos Menores Art. 118 LCSP"
+              className="w-full resize-none bg-transparent text-base md:text-lg text-slate-900 placeholder-slate-400 focus:outline-none leading-relaxed"
+            />
+
+            {/* Attached File Chip */}
+            {attachedFile && (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-semibold">
+                <FileText className="w-3.5 h-3.5" />
+                <span>{attachedFile.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setAttachedFile(null)}
+                  className="hover:text-indigo-950"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Teacher Selector Row (Compact) */}
+            <div className="pt-2 border-t border-slate-100">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                Elige tu profesor:
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {TEACHERS_LIST.map(t => {
+                  const isSelected = t.id === activeTeacher.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setActiveTeacher(t)}
+                      className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all ${
+                        isSelected
+                          ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                        style={{ backgroundColor: t.accentColor }}
+                      >
+                        {t.name.split(' ')[1]?.[0] || t.name[0]}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-slate-900 truncate">{t.name}</div>
+                        <div className="text-[10px] text-slate-500 truncate">{t.subject}</div>
+                      </div>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Bottom Action Bar */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,.md,.csv,.json"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 flex items-center gap-1.5 transition-colors"
+                >
+                  <Paperclip className="w-4 h-4" />
+                  <span>Agregar apuntes (.txt/.md)</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => startLesson()}
+                disabled={(!queryInput.trim() && !attachedFile) || isLoadingLesson}
+                className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-40"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>{isLoadingLesson ? 'Preparando pizarra...' : 'Empezar'}</span>
+              </button>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2.5">
+          {/* Quick Ideas */}
+          <div className="mt-8 w-full space-y-2.5 text-center">
+            <p className="text-xs font-semibold text-slate-400">
+              o prueba con una de estas ideas:
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {QUICK_IDEAS.map((idea, i) => (
+                <button
+                  key={i}
+                  onClick={() => startLesson(idea.query, idea.mode)}
+                  className="px-3 py-1.5 rounded-full bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-xs text-slate-700 transition-all shadow-2xs flex items-center gap-1.5"
+                >
+                  <span className="font-bold text-indigo-600">{idea.label}</span>
+                  <span>{idea.query}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </main>
+
+        <AISettingsModal
+          isOpen={isAISettingsOpen}
+          onClose={() => setIsAISettingsOpen(false)}
+          config={aiConfig}
+          onSave={handleSaveAIConfig}
+        />
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // VIEW 2: CLASSROOM (Live Whiteboard + 1-on-1 Chat Split View)
+  // ============================================================================
+  return (
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans">
+      {/* Compact Classroom Header */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-2.5">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={handleTestAudio}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-sm ${
-                audioTested
-                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
-                  : 'bg-blue-950/60 hover:bg-blue-900 border-blue-500/50 text-blue-300'
-              }`}
-              title="Probar sonido y desbloquear el sintetizador de voz del navegador"
+              onClick={() => {
+                clearTimersAndSpeech();
+                setView('home');
+              }}
+              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors flex-shrink-0"
             >
-              <Volume2 className="w-3.5 h-3.5" />
-              <span>{audioTested ? 'Audio OK ✓' : '🔊 Probar Voz'}</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Nueva clase</span>
             </button>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm md:text-base font-extrabold text-slate-900 truncate m-0">
+                  {currentLesson.title}
+                </h1>
+                <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-200 flex-shrink-0">
+                  {currentLesson.mode === 'exam'
+                    ? 'Examen'
+                    : currentLesson.mode === 'homework'
+                    ? 'Tarea'
+                    : 'Tema'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
-              onClick={() => setIsAskModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs md:text-sm font-bold shadow-lg shadow-blue-600/20 transition-all transform active:scale-95"
+              onClick={handleToggleMute}
+              className={`p-2 rounded-xl border text-xs font-semibold transition-colors ${
+                isMuted
+                  ? 'bg-rose-50 border-rose-200 text-rose-600'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+              title={isMuted ? 'Activar voz' : 'Silenciar voz'}
             >
-              <Sparkles className="w-4 h-4" />
-              <span>Nuevo tema / apunte</span>
+              {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+
+            <button
+              onClick={() => setIsAISettingsOpen(true)}
+              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 hidden sm:flex items-center gap-1"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>{aiConfig.apiKey ? 'IA Conectada' : 'Conectar IA'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowReviewModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Apuntes y Quiz</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 space-y-6">
-        
-        {/* Direct Oposiciones & Syllabus Input Bar */}
-        <div className="bg-gradient-to-r from-blue-950/70 via-slate-900 to-slate-900 border border-blue-500/30 rounded-3xl p-5 shadow-2xl relative overflow-hidden">
-          <div className="max-w-3xl">
-            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-1.5 mb-1.5">
-              <span>🎯</span> ¿Qué tema u oposición quieres que te explique en la pizarra blanca?
-            </span>
-            <h2 className="text-xl md:text-2xl font-extrabold text-white mb-3">
-              Escribe cualquier tema, artículo o concepto y el preparador dará la lección:
-            </h2>
-            
-            <form
-              onSubmit={e => {
-                e.preventDefault();
-                handleQuerySubmit(inlineQuery, 'topic');
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                type="text"
-                value={inlineQuery}
-                onChange={e => setInlineQuery(e.target.value)}
-                placeholder="Ej: Tema 2 Constitución: La Corona, o Ley 39/2015 Silencio Administrativo, o Contratos Menores..."
-                className="flex-1 bg-slate-800/90 border border-slate-700 rounded-2xl px-4 py-3 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-sans"
-              />
-              <button
-                type="submit"
-                disabled={!inlineQuery.trim() || isLoadingLesson}
-                className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-600/30 transition-all active:scale-95 disabled:opacity-40"
-              >
-                <span>{isLoadingLesson ? 'Preparando pizarra...' : 'Dar Lección'}</span>
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
-
-            {/* Quick Direct Topic Pills */}
-            <div className="flex flex-wrap items-center gap-2 pt-3">
-              <span className="text-[11px] text-slate-400 font-semibold">Temas directos:</span>
-              <button
-                type="button"
-                onClick={() => handleQuerySubmit('Contratos Menores', 'topic')}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                📄 Contratos Menores (LCSP)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuerySubmit('La Corona y el Refrendo', 'topic')}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                👑 La Corona (Arts. 56 y 64 CE)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuerySubmit('Silencio Administrativo', 'topic')}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                ⏳ Silencio Positivo vs Negativo
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuerySubmit('Nulidad de Pleno Derecho y Anulabilidad', 'topic')}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                ⚖️ Nulidad (Art. 47) vs Anulabilidad (Art. 48)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuerySubmit('Recurso de Alzada y Reposición', 'topic')}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                📑 Alzada vs Reposición
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Preset Oposiciones Lessons */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-            <span className="font-bold uppercase tracking-wider flex items-center gap-1.5 text-slate-300">
-              <BookOpen className="w-4 h-4 text-blue-400" /> Temas Clave de Examen en Oposiciones
-            </span>
-            <span>Haz clic en cualquier tema para que el preparador lo escriba y explique</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {PRESET_LESSONS.map(lesson => {
-              const isActive = lesson.id === currentLesson.id;
-              return (
-                <button
-                  key={lesson.id}
-                  onClick={() => switchLesson(lesson)}
-                  className={`text-left p-3.5 rounded-2xl border transition-all duration-200 flex flex-col justify-between ${
-                    isActive
-                      ? 'bg-slate-800 border-blue-500 shadow-lg shadow-blue-500/20 scale-[1.01]'
-                      : 'bg-slate-900/60 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800">
-                        {lesson.topic}
-                      </span>
-                    </div>
-                    <h3 className="font-bold text-xs md:text-sm text-slate-100 line-clamp-2 leading-snug">
-                      {lesson.title}
-                    </h3>
-                  </div>
-
-                  <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">
-                      Preparador: {TEACHERS.javier?.name || 'Prof. Javier'}
-                    </span>
-                    {isActive ? (
-                      <span className="text-blue-400 font-bold flex items-center gap-1">
-                        <PlayCircle className="w-3.5 h-3.5" /> En pizarra
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 hover:text-slate-300">Ver lección ➔</span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Lesson Header Banner */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                {currentLesson.topic}
-              </span>
-              <span className="text-xs text-slate-400">
-                {currentLesson.steps.length} bloques pedagógicos
-              </span>
-            </div>
-            <h2 className="text-lg md:text-xl font-bold text-slate-100 m-0">
-              {currentLesson.title}
-            </h2>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => executeStep(currentStepIndex, true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition-colors"
-            >
-              <Volume2 className="w-3.5 h-3.5 text-blue-400" />
-              <span>Escuchar explicación</span>
-            </button>
-            <button
-              onClick={handleDownloadBoard}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition-colors"
-              title="Guardar imagen de la pizarra"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Descargar Pizarra</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Whiteboard Zone (Default Pizarra Blanca) */}
-        <div className="space-y-4">
+      {/* Main Split Classroom */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 md:p-5 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
+        {/* LEFT: Live Animated Whiteboard + Compact Playback Controls */}
+        <div className="space-y-3">
           <Whiteboard
             boardStyle={boardStyle}
             commands={accumulatedCommands}
             activeTeacher={activeTeacher}
             isWriting={isWriting}
-            focusCoord={focusCoord}
+            focusCoord={currentStep.writingFocusCoord}
           />
 
-          {/* Teacher Avatar & Real-time Speech Balloon */}
-          <TeacherAvatar
+          {/* Compact Playback & Speed Bar */}
+          <div className="bg-white border border-slate-200 rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTogglePlay}
+                className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isPlaying ? 'Pausar' : 'Continuar'}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (currentStepIndex > 0) executeStep(currentLesson, currentStepIndex - 1, true);
+                }}
+                disabled={currentStepIndex === 0}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40"
+                title="Paso anterior"
+              >
+                <SkipBack className="w-4 h-4" />
+              </button>
+
+              <span className="text-xs font-bold text-slate-600 px-1">
+                Paso {currentStepIndex + 1} / {currentLesson.steps.length}
+              </span>
+
+              <button
+                onClick={() => {
+                  if (currentStepIndex < currentLesson.steps.length - 1) {
+                    executeStep(currentLesson, currentStepIndex + 1, true);
+                  }
+                }}
+                disabled={currentStepIndex >= currentLesson.steps.length - 1}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40"
+                title="Siguiente paso"
+              >
+                <SkipForward className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => executeStep(currentLesson, currentStepIndex, true)}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700"
+                title="Repetir este paso"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+                {[1, 1.25, 1.5].map(spd => (
+                  <button
+                    key={spd}
+                    onClick={() => setPlaybackSpeed(spd)}
+                    className={`px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                      playbackSpeed === spd
+                        ? 'bg-white text-indigo-600 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {spd}x
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() =>
+                  setBoardStyle(boardStyle === 'whiteboard' ? 'chalkboard' : 'whiteboard')
+                }
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold"
+              >
+                {boardStyle === 'whiteboard' ? 'Pizarra Verde' : 'Pizarra Blanca'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT: 1-on-1 Live Tutor Conversation */}
+        <div className="lg:sticky lg:top-16">
+          <LiveTutorChat
             teacher={activeTeacher}
             isSpeaking={isSpeaking}
-            currentSpeech={currentStep.speech}
-          />
-
-          {/* Socratic Checkpoint Modal (when active) */}
-          {isSocraticActive && currentStep.socratic && (
-            <SocraticModal
-              socratic={currentStep.socratic}
-              onPassed={handleSocraticPassed}
-            />
-          )}
-
-          {/* Playback Controls */}
-          <ControlBar
-            isPlaying={isPlaying}
-            onTogglePlay={handleTogglePlay}
-            currentStepIndex={currentStepIndex}
-            totalSteps={currentLesson.steps.length}
-            onPrevStep={handlePrevStep}
-            onNextStep={handleNextStep}
-            onReplayStep={handleReplayStep}
-            playbackSpeed={playbackSpeed}
-            onChangeSpeed={handleChangeSpeed}
-            isMuted={isMuted}
-            onToggleMute={handleToggleMute}
-            boardStyle={boardStyle}
-            onToggleBoardStyle={() =>
-              setBoardStyle(boardStyle === 'whiteboard' ? 'chalkboard' : 'whiteboard')
-            }
-            onAskQuestion={() => setIsAskModalOpen(true)}
-            onDownloadBoard={handleDownloadBoard}
+            isWriting={isWriting}
+            messages={chatMessages}
+            activeSocratic={currentStep.socratic}
+            isWaitingForSocratic={isWaitingForSocratic}
+            onSendMessage={handleStudentMessage}
+            onAnswerSocraticOption={(idx, text) => handleSocraticOption(idx, text)}
+            onReplayAudio={() => executeStep(currentLesson, currentStepIndex, true)}
+            isGeneratingReply={isGeneratingReply}
           />
         </div>
-
-        {/* Teacher Picker Section */}
-        <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4">
-          <TeacherPicker
-            selectedTeacherId={activeTeacher.id}
-            onSelectTeacher={handleSelectTeacher}
-          />
-        </div>
-
-        {/* Post-Lesson Review (Flashcards & Quiz) */}
-        {(isLessonFinished || currentStepIndex === currentLesson.steps.length - 1) && (
-          <PostLessonReview
-            flashcards={currentLesson.flashcards}
-            quiz={currentLesson.quiz}
-            onRestartLesson={() => {
-              setCurrentStepIndex(0);
-              setIsLessonFinished(false);
-              executeStep(0, true);
-            }}
-          />
-        )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500">
-        <p>
-          AhaTutor • Preparación de Oposiciones y Temarios con Pizarra Interactiva.
-        </p>
-      </footer>
+      {/* Post-Lesson Flashcards & Quiz Modal */}
+      {(showReviewModal || isLessonFinished) && showReviewModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-3xl w-full relative">
+            <button
+              onClick={() => setShowReviewModal(false)}
+              className="absolute top-3 right-3 z-10 p-2 rounded-xl bg-slate-800 text-white hover:bg-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <PostLessonReview
+              flashcards={currentLesson.flashcards}
+              quiz={currentLesson.quiz}
+              onRestartLesson={() => {
+                setShowReviewModal(false);
+                setExtraCommands([]);
+                setIsLessonFinished(false);
+                executeStep(currentLesson, 0, true);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
-      {/* Ask / Custom Query Modal */}
-      <AskModal
-        isOpen={isAskModalOpen}
-        onClose={() => setIsAskModalOpen(false)}
-        onSubmit={handleQuerySubmit}
-        isLoading={isLoadingLesson}
+      <AISettingsModal
+        isOpen={isAISettingsOpen}
+        onClose={() => setIsAISettingsOpen(false)}
+        config={aiConfig}
+        onSave={handleSaveAIConfig}
       />
     </div>
   );

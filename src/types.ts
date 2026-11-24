@@ -195,3 +195,19 @@ export interface Lesson {
   flashcards: Flashcard[];
   quiz: QuizQuestion[];
 }
+
+export type AIProvider = 'gemini' | 'openai' | 'groq';
+
+export interface AIConfig {
+  provider: AIProvider;
+  apiKey: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'teacher' | 'student' | 'system';
+  text: string;
+  timestamp: number;
+  isQuestion?: boolean;
+}
+

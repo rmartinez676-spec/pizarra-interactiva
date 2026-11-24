@@ -1,15 +1,21 @@
-import type { Lesson, LessonStep, TeacherId } from '../types';
+import type { AIProvider, BoardCommand, Lesson, LessonStep, TeacherId } from '../types';
 
 export interface GenerationRequest {
   query: string;
   mode: 'topic' | 'homework' | 'exam';
   teacherId: TeacherId;
   apiKey?: string;
+  provider?: AIProvider;
+  attachmentText?: string;
+}
+
+export interface InterruptionResponse {
+  speech: string;
+  commands: BoardCommand[];
 }
 
 export async function generateInteractiveLesson(req: GenerationRequest): Promise<Lesson> {
-  // If user provided an API key:
-  if (req.apiKey && req.apiKey.trim().length > 10) {
+  if (req.apiKey && req.apiKey.trim().length > 8) {
     try {
       return await callLlmWithStructuredOutput(req);
     } catch (e) {
@@ -17,40 +23,118 @@ export async function generateInteractiveLesson(req: GenerationRequest): Promise
     }
   }
 
-  // Universal offline pedagogical generator for ANY topic or opposition syllabus
-  return createUniversalLessonFromTopic(req.query, req.mode, req.teacherId);
+  return createUniversalLessonFromTopic(req.query, req.mode, req.teacherId, req.attachmentText);
 }
 
-async function callLlmWithStructuredOutput(req: GenerationRequest): Promise<Lesson> {
-  const systemPrompt = `Eres un preparador experto de oposiciones y profesor de academia de alto rendimiento en pizarra blanca interactiva.
-El alumno quiere aprender: "${req.query}".
-Modo: ${req.mode}.
-Debes estructurar una lección en formato JSON estricto:
-- title: título formal de la lección / tema
-- topic: asignatura o ámbito (ej. Derecho Administrativo, Constitución, Historia, etc.)
-- category: 'General'
-- steps: array de 2 a 3 pasos didácticos. Cada paso debe tener:
-  - id: string
-  - title: nombre del subapartado
-  - speech: locución exacta que el preparador dirá en voz alta (muy didáctico, señalando la pizarra y avisando de trampas de examen).
-  - commands: array de comandos para la pizarra blanca (tipos: 'clear', 'title', 'text', 'box', 'arrow', 'circle', 'highlight').
-  - socratic (opcional en el primer paso): { prompt: string, options: string[], correctIndex: number, hint: string, feedbackCorrect: string, feedbackRetry: string }
-- flashcards: array de 3 tarjetas { id, front, back }
-- quiz: array de 2 preguntas de test { id, question, options: string[], correctIndex: number, explanation: string }
+export async function answerStudentInterruption(params: {
+  question: string;
+  lessonTitle: string;
+  currentStepTitle: string;
+  currentSpeech: string;
+  apiKey?: string;
+  provider?: AIProvider;
+}): Promise<InterruptionResponse> {
+  const { question, lessonTitle, currentStepTitle, currentSpeech, apiKey, provider } = params;
 
-Responde ÚNICAMENTE con el objeto JSON válido.`;
+  if (apiKey && apiKey.trim().length > 8) {
+    try {
+      const prompt = `Eres un tutor estilo Ahaboard que explica paso a paso dibujando en una pizarra blanca (coordenadas 0..1000 x 0..580).
+Estabas explicando "${lessonTitle}" (paso: "${currentStepTitle}", decías: "${currentSpeech}").
+El estudiante te ha interrumpido con: "${question}".
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+Responde de tú a tú, claro, cercano y pedagógico, y añade 1 a 3 comandos de dibujo para aclarar la duda en la zona inferior o lateral de la pizarra (y entre 380 y 520, x entre 50 y 940) sin borrar lo anterior.
+Devuelve ÚNICAMENTE JSON válido con este formato:
+{
+  "speech": "Texto que dirás en voz alta respondiendo directamente al estudiante",
+  "commands": [
+    { "id": "int-1", "type": "box", "x": 50, "y": 370, "width": 890, "height": 140, "color": "#7c3aed", "label": "Aclaración" },
+    { "id": "int-2", "type": "text", "text": "• Punto clave...", "x": 70, "y": 415, "size": 16, "color": "#0f172a", "style": "bold" }
+  ]
+}`;
+
+      const raw = await callRawJsonLlm(prompt, apiKey, provider || 'gemini');
+      const parsed = JSON.parse(raw);
+      return {
+        speech: parsed.speech || 'Buena pregunta. Te lo aclaro aquí mismo en la pizarra.',
+        commands: Array.isArray(parsed.commands) ? parsed.commands : [],
+      };
+    } catch (e) {
+      console.warn('Error en interrupción con LLM, usando respuesta local:', e);
+    }
+  }
+
+  // Smart local fallback for interruptions
+  const lowerQ = question.toLowerCase();
+  let replySpeech = `¡Excelente pregunta! Sobre "${question}", fíjate en la pizarra: lo más importante es no perder de vista la regla clave del apartado actual (${currentStepTitle}).`;
+  if (lowerQ.includes('ejemplo') || lowerQ.includes('no entiendo') || lowerQ.includes('otra forma')) {
+    replySpeech = `¡Claro! Te lo explico de otra forma más sencilla. Imagina el caso práctico más directo de ${lessonTitle}: quédate con la idea central que acabo de anotar abajo en morado.`;
+  } else if (lowerQ.includes('a la vez') || lowerQ.includes('mismo tiempo') || lowerQ.includes('iguales')) {
+    replySpeech = `¡Exacto! Llegan exactamente a la vez porque la gravedad tira hacia abajo con la misma aceleración para las dos.`;
+  }
+
+  return {
+    speech: replySpeech,
+    commands: [
+      {
+        id: 'int-box-' + Date.now(),
+        type: 'box',
+        x: 50,
+        y: 375,
+        width: 900,
+        height: 110,
+        color: '#7c3aed',
+        label: `💬 Aclaración en vivo: "${question.slice(0, 45)}"`,
+      },
+      {
+        id: 'int-txt-' + Date.now(),
+        type: 'text',
+        text: `➔ ${replySpeech.slice(0, 92)}${replySpeech.length > 92 ? '...' : ''}`,
+        x: 70,
+        y: 425,
+        size: 16,
+        color: '#4c1d95',
+        style: 'bold',
+      },
+    ],
+  };
+}
+
+async function callRawJsonLlm(prompt: string, apiKey: string, provider: AIProvider): Promise<string> {
+  if (provider === 'gemini') {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.6,
+        },
+      }),
+    });
+    if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  }
+
+  const endpoint =
+    provider === 'groq'
+      ? 'https://api.groq.com/openai/v1/chat/completions'
+      : 'https://api.openai.com/v1/chat/completions';
+  const model = provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
+
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${req.apiKey}`,
+      Authorization: `Bearer ${apiKey.trim()}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'system', content: systemPrompt }],
+      model,
+      messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
-      temperature: 0.7,
+      temperature: 0.6,
     }),
   });
 
@@ -59,11 +143,73 @@ Responde ÚNICAMENTE con el objeto JSON válido.`;
   }
 
   const data = await response.json();
-  const content = JSON.parse(data.choices[0].message.content);
+  return data.choices[0].message.content;
+}
+
+async function callLlmWithStructuredOutput(req: GenerationRequest): Promise<Lesson> {
+  const attachmentSection = req.attachmentText
+    ? `\n\nEl alumno ha adjuntado estos apuntes/texto de referencia. Basa tu clase principalmente en este contenido:\n"""\n${req.attachmentText.slice(0, 6000)}\n"""`
+    : '';
+
+  const modeInstructions =
+    req.mode === 'exam'
+      ? 'Modo EXAMEN: Repasa puntos clave, señala trampas típicas de tribunal/examen y termina con cuestionario.'
+      : req.mode === 'homework'
+      ? 'Modo TAREA: Guía paso a paso dando pistas socráticas sin regalar la respuesta final de golpe.'
+      : 'Modo TEMA: Explica el concepto de raíz a fondo con esquemas visuales, comparaciones y claridad.';
+
+  const systemPrompt = `Eres ahaboard, un tutor experto de IA con pizarra blanca interactiva (coordenadas del canvas: ancho 1000, alto 580).
+El alumno quiere aprender: "${req.query}".
+${modeInstructions}${attachmentSection}
+
+Debes estructurar una lección en formato JSON estricto con esta estructura:
+{
+  "title": "Título claro de la clase",
+  "topic": "Asignatura o materia",
+  "category": "General",
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Nombre del paso",
+      "speech": "Locución natural, cercana y didáctica en español que dirás en voz alta mientras dibujas este paso.",
+      "commands": [
+        { "id": "c1", "type": "clear" },
+        { "id": "c2", "type": "title", "text": "Título en pizarra", "subtitle": "Subtítulo breve", "x": 50, "y": 42, "color": "#1e3a8a" },
+        { "id": "c3", "type": "box", "x": 50, "y": 90, "width": 430, "height": 250, "color": "#2563eb", "label": "1. Concepto Clave" },
+        { "id": "c4", "type": "text", "text": "• Dato concreto 1", "x": 70, "y": 135, "size": 16, "color": "#0f172a", "style": "bold" }
+      ],
+      "socratic": {
+        "prompt": "Pregunta directa al estudiante para comprobar que lo entiende",
+        "options": ["Opción A", "Opción B", "Opción C"],
+        "correctIndex": 0,
+        "hint": "Pista breve",
+        "feedbackCorrect": "¡Exacto! ...",
+        "feedbackRetry": "Casi, fíjate en..."
+      }
+    }
+  ],
+  "flashcards": [
+    { "id": "fc-1", "front": "Pregunta rápida", "back": "Respuesta" }
+  ],
+  "quiz": [
+    { "id": "qz-1", "question": "Pregunta de test", "options": ["A", "B", "C"], "correctIndex": 0, "explanation": "Explicación" }
+  ]
+}
+
+Reglas de dibujo en pizarra (1000x580):
+- Tipos de commands permitidos: "clear", "title", "text", "box", "arrow" (from:[x,y], to:[x,y]), "highlight" (x,y,width,height,color).
+- No superpongas textos. Usa x entre 50 y 920, y entre 40 y 520.
+- Crea 2 o 3 pasos progresivos (en el paso 2 y 3 NO pongas "clear" para que se vaya completando la misma pizarra!).
+- Sé concreto, riguroso y didáctico, nunca pongas texto genérico de relleno.
+Responde ÚNICAMENTE con el JSON válido.`;
+
+  const raw = await callRawJsonLlm(systemPrompt, req.apiKey!, req.provider || 'gemini');
+  const content = JSON.parse(raw);
+
   return {
     id: 'custom-' + Date.now(),
     title: content.title || req.query,
-    topic: content.topic || 'Oposiciones y Formación',
+    topic: content.topic || 'Tutoría con Pizarra',
     category: 'General',
     mode: req.mode,
     teacherId: req.teacherId,
@@ -270,16 +416,270 @@ const TOPIC_KNOWLEDGE_BASE: TopicKnowledge[] = [
       correctIndex: 0,
       explanation: 'Artículo 121.1 de la Ley 39/2015: cabe alzada contra resoluciones y actos de trámite cualificados que no pongan fin a la vía administrativa.'
     }
+  },
+  {
+    keywords: ['balon', 'balón', 'parabólico', 'parabolico', 'curva', 'gravedad', 'proyectil'],
+    title: 'Movimiento Parabólico: ¿Por qué un balón hace una curva?',
+    topic: 'Física • Cinemática y Gravedad',
+    box1Label: '1. Dos movimientos independientes a la vez',
+    box1Lines: [
+      { text: '• Horizontal (vx): Velocidad CONSTANTE (sin empuje tras el chute).', size: 15, color: '#2563eb', bold: true },
+      { text: '• Vertical (vy): Solo tira la GRAVEDAD hacia abajo (g = 9.8 m/s²).', size: 15, color: '#dc2626', bold: true },
+      { text: '• Experimento: Bola A (soltada) vs Bola B (lanzada de lado):', size: 15, color: '#0f172a', bold: true },
+      { text: '  ✓ ¡Llegan al suelo EXACTAMENTE A LA VEZ!', size: 16, color: '#059669', bold: true }
+    ],
+    box2Label: '2. Conclusión Visual en la Pizarra',
+    box2Lines: [
+      { text: '• Al subir: la gravedad frena la componente vertical.', size: 15, color: '#0f172a' },
+      { text: '• En el pico: velocidad vertical = 0 (sigue avanzando de lado).', size: 15, color: '#1e3a8a', bold: true },
+      { text: '• Al caer: acelera hacia abajo manteniendo su avance lateral.', size: 15, color: '#0f172a' },
+      { text: '• Más rápido de lado = cae más lejos, en el MISMO tiempo.', size: 15, color: '#dc2626', bold: true }
+    ],
+    speech1: '¡Gran pregunta! ¿Por qué un balón pateado hace una curva? Porque ocurren dos movimientos a la vez: hacia adelante va a velocidad constante porque tras la patada ya nada lo empuja, mientras que hacia abajo solo tira la gravedad.',
+    speech2: 'Imagina dos bolas al borde de una mesa: A se deja caer y B se lanza de lado. Aunque parezca mentira, ¡llegan a la vez! La velocidad lateral solo hace que B caiga más lejos, pero tarda exactamente el mismo tiempo en tocar el suelo.',
+    summaryRule: 'El movimiento parabólico combina avance horizontal constante con caída libre vertical: la gravedad manda en el tiempo de vuelo.',
+    socratic: {
+      prompt: 'Si A se deja caer y B se lanza horizontalmente desde la misma altura, ¿cuál llega antes al suelo?',
+      options: ['Llegan exactamente a la vez', 'Llega antes A porque cae recto', 'Llega antes B porque lleva impulso'],
+      correctIndex: 0,
+      hint: 'El movimiento horizontal no afecta a la caída vertical provocada por la gravedad.',
+      feedbackCorrect: '¡Exacto! Ambas tardan exactamente lo mismo en caer porque la gravedad actúa igual sobre las dos.',
+      feedbackRetry: '¡Cuidado! La velocidad hacia los lados no frena la caída: las dos llegan a la vez.'
+    },
+    flashcards: [
+      { front: 'Tras patear un balón, ¿qué fuerza lo empuja hacia adelante en el aire?', back: 'Ninguna (despreciando el aire): avanza por inercia a velocidad horizontal constante.' },
+      { front: '¿Qué fuerza curva la trayectoria del balón hacia el suelo?', back: 'Únicamente la gravedad tirando hacia abajo.' }
+    ],
+    quiz: {
+      question: 'En el punto más alto de una parábola, ¿cuál es la velocidad vertical del balón?',
+      options: ['Cero (0 m/s)', 'Máxima', 'Igual a la horizontal'],
+      correctIndex: 0,
+      explanation: 'En la cima de la curva el balón deja de subir un instante (vy = 0) antes de empezar a bajar.'
+    }
+  },
+  {
+    keywords: ['interes', 'interés', 'compuesto', 'economía', 'economia', 'dinero'],
+    title: 'Interés Compuesto: ¿Por qué crece tan rápido?',
+    topic: 'Economía y Finanzas • Capitalización',
+    box1Label: '1. Interés Simple vs Interés Compuesto',
+    box1Lines: [
+      { text: '• Interés SIMPLE: Solo ganas intereses sobre el capital inicial.', size: 15, color: '#475569', bold: true },
+      { text: '  Ej: 1.000€ al 10% = +100€ cada año (línea recta).', size: 14, color: '#0f172a' },
+      { text: '• Interés COMPUESTO: Los intereses generan NUEVOS intereses.', size: 15, color: '#2563eb', bold: true },
+      { text: '  Año 1: 1.100€ | Año 2: 1.210€ | Año 10: 2.593€ (curva exponencial).', size: 14, color: '#059669', bold: true }
+    ],
+    box2Label: '2. Fórmula y Regla del 72',
+    box2Lines: [
+      { text: '• Fórmula: Capital Final = C₀ · (1 + r)ᵗ', size: 16, color: '#1e3a8a', bold: true },
+      { text: '• La clave NO es solo el porcentaje, sino el TIEMPO (exponente t).', size: 15, color: '#dc2626', bold: true },
+      { text: '• Truco mental (Regla del 72): 72 ÷ tasa% = años para DUPLICAR.', size: 15, color: '#047857', bold: true },
+      { text: '  Al 8% anual, duplicas tu dinero cada 9 años (72 / 8 = 9).', size: 14, color: '#334155' }
+    ],
+    speech1: 'El interés compuesto crece tan rápido porque es como una bola de nieve: los intereses que ganas este año se suman al capital y el año siguiente también producen intereses. En el interés simple sumas siempre lo mismo; en el compuesto multiplicas.',
+    speech2: 'Fíjate en la fórmula: el tiempo está en el exponente. Y recuerda la Regla del 72 para calcularlo de cabeza: divide 72 entre el porcentaje anual y sabrás en cuántos años se duplica el dinero.',
+    summaryRule: 'El interés compuesto reinvierte las ganancias cada periodo: el tiempo en el exponente convierte un crecimiento lento en exponencial.',
+    socratic: {
+      prompt: 'Usando la Regla del 72, si inviertes a un 6% anual compuesto, ¿en cuántos años aproximados se duplicará tu dinero?',
+      options: ['12 años (72 ÷ 6)', '6 años', '24 años'],
+      correctIndex: 0,
+      hint: 'Divide 72 entre la tasa de interés anual (6).',
+      feedbackCorrect: '¡Correcto! 72 entre 6 son 12 años para duplicar el capital sin hacer cálculos complejos.',
+      feedbackRetry: 'Aplica la Regla del 72: divide 72 entre 6.'
+    },
+    flashcards: [
+      { front: '¿Qué diferencia al interés compuesto del simple?', back: 'Que los intereses generados se acumulan al capital para producir nuevos intereses.' },
+      { front: '¿Para qué sirve la Regla del 72?', back: 'Para estimar cuántos años tarda en duplicarse una inversión dividiendo 72 entre el interés anual.' }
+    ],
+    quiz: {
+      question: 'En la fórmula C = C₀ · (1 + r)ᵗ, ¿qué variable provoca el disparo exponencial a largo plazo?',
+      options: ['El tiempo (t) en el exponente', 'El capital inicial', 'La resta lineal'],
+      correctIndex: 0,
+      explanation: 'Al estar el tiempo t como exponente, cada periodo multiplica el acumulado total.'
+    }
+  },
+  {
+    keywords: ['derivada', 'calculo', 'cálculo', 'pendiente', 'tangente'],
+    title: '¿Qué es realmente una Derivada?',
+    topic: 'Cálculo Diferencial • Matemáticas',
+    box1Label: '1. La idea visual: Velocidad Instantánea',
+    box1Lines: [
+      { text: '• Pendiente media: Δy / Δx entre dos puntos separados.', size: 15, color: '#0f172a', bold: true },
+      { text: '• ¿Qué pasa si acercas los dos puntos hasta Δx → 0?', size: 15, color: '#2563eb', bold: true },
+      { text: '• La recta secante se convierte en la RECTA TANGENTE.', size: 15, color: '#dc2626', bold: true },
+      { text: '• La derivada f\'(x) es la PENDIENTE exacta en ese instante.', size: 16, color: '#059669', bold: true }
+    ],
+    box2Label: '2. ¿Para qué sirve en la vida real?',
+    box2Lines: [
+      { text: '• Física: La derivada de la posición es la VELOCIDAD instantánea.', size: 15, color: '#1e3a8a', bold: true },
+      { text: '• Optimización: Donde f\'(x) = 0 hay un MÁXIMO o un MÍNIMO.', size: 15, color: '#dc2626', bold: true },
+      { text: '• Economía: Coste o beneficio marginal al producir 1 unidad más.', size: 14, color: '#334155' }
+    ],
+    speech1: 'Olvida por un segundo los límites complicados. Una derivada es simplemente la inclinación exacta de una curva en un punto concreto. Es pasar de saber tu velocidad media en un viaje a mirar el velocímetro en este preciso segundo.',
+    speech2: 'Lo más útil de la derivada es encontrar máximos y mínimos: en la cima de una montaña o en el fondo de un valle, la pendiente es completamente plana, es decir, la derivada vale cero.',
+    summaryRule: 'La derivada f\'(x) mide qué tan rápido cambia una función en un instante exacto: geométricamente es la pendiente de la recta tangente.',
+    socratic: {
+      prompt: 'En el punto más alto de una curva (un máximo local), ¿cuánto vale su derivada f\'(x)?',
+      options: ['Cero (la tangente es horizontal)', 'Infinito', 'Negativa'],
+      correctIndex: 0,
+      hint: 'En la cima de la curva la recta tangente ni sube ni baja, está totalmente plana.',
+      feedbackCorrect: '¡Exacto! Cuando una función alcanza un máximo o mínimo suave, su pendiente instantánea es 0.',
+      feedbackRetry: 'Piensa en una montaña rusa justo arriba del todo: ni sube ni baja, la pendiente es 0.'
+    },
+    flashcards: [
+      { front: 'Geométricamente, ¿qué representa la derivada f\'(a)?', back: 'La pendiente de la recta tangente a la curva en x = a.' },
+      { front: 'Si la derivada es positiva en un tramo, ¿qué hace la función?', back: 'Está creciendo (subiendo).' }
+    ],
+    quiz: {
+      question: 'La derivada de la posición respecto al tiempo representa:',
+      options: ['La velocidad instantánea', 'La distancia total', 'La masa del objeto'],
+      correctIndex: 0,
+      explanation: 'Mide cuánto cambia la posición en un instante infinitesimal de tiempo.'
+    }
   }
 ];
 
 function createUniversalLessonFromTopic(
   query: string,
   mode: 'topic' | 'homework' | 'exam',
-  teacherId: TeacherId
+  teacherId: TeacherId,
+  attachmentText?: string
 ): Lesson {
-  const cleanQuery = query.trim();
+  const cleanQuery = query.trim() || 'Apuntes adjuntos';
   const lowerQuery = cleanQuery.toLowerCase();
+
+  // If user uploaded notes/text without an API key, parse real sentences from the uploaded file!
+  if (attachmentText && attachmentText.trim().length > 30) {
+    const rawLines = attachmentText
+      .split(/\r?\n|\.\s+/)
+      .map(l => l.trim())
+      .filter(l => l.length > 15 && l.length < 110)
+      .slice(0, 8);
+
+    const leftLines = rawLines.slice(0, 4);
+    const rightLines = rawLines.slice(4, 8);
+
+    const steps: LessonStep[] = [
+      {
+        id: 'att-1',
+        title: '1. Puntos Clave de tus Apuntes',
+        speech: `He leído el documento que has subido sobre "${cleanQuery}". Vamos a ir anotando en la pizarra las ideas principales que aparecen en tu texto para repasarlas paso a paso.`,
+        writingFocusCoord: [250, 90],
+        commands: [
+          { id: 'a1-clear', type: 'clear' },
+          {
+            id: 'a1-title',
+            type: 'title',
+            text: cleanQuery.slice(0, 54),
+            subtitle: `Repaso de tus apuntes adjuntos (${mode.toUpperCase()})`,
+            x: 50,
+            y: 40,
+            color: '#1e3a8a',
+          },
+          {
+            id: 'a1-box1',
+            type: 'box',
+            x: 50,
+            y: 90,
+            width: 430,
+            height: 260,
+            color: '#2563eb',
+            label: '1. Ideas extraídas del texto',
+          },
+          ...leftLines.map((line, idx) => ({
+            id: `a1-l-${idx}`,
+            type: 'text' as const,
+            text: `• ${line.slice(0, 56)}${line.length > 56 ? '...' : ''}`,
+            x: 70,
+            y: 135 + idx * 42,
+            size: 14,
+            color: '#0f172a',
+            style: 'bold' as const,
+          })),
+          {
+            id: 'a1-box2',
+            type: 'box',
+            x: 510,
+            y: 90,
+            width: 440,
+            height: 260,
+            color: '#059669',
+            label: '2. Desarrollo y detalles clave',
+          },
+          ...(rightLines.length > 0
+            ? rightLines
+            : ['• Conecta una API Key gratuita (Gemini/Groq) para análisis profundo IA.']
+          ).map((line, idx) => ({
+            id: `a1-r-${idx}`,
+            type: 'text' as const,
+            text: `• ${line.slice(0, 56)}${line.length > 56 ? '...' : ''}`,
+            x: 530,
+            y: 135 + idx * 42,
+            size: 14,
+            color: '#0f172a',
+            style: 'clean' as const,
+          })),
+        ],
+      },
+      {
+        id: 'att-2',
+        title: '2. Síntesis Final',
+        speech:
+          'Ya tienes el esquema de tus apuntes en la pizarra. Si quieres preguntarme cualquier duda sobre alguna frase concreta, escríbeme aquí en el chat o interrúmpeme.',
+        writingFocusCoord: [500, 420],
+        commands: [
+          {
+            id: 'a2-hl',
+            type: 'highlight',
+            x: 50,
+            y: 380,
+            width: 900,
+            height: 70,
+            color: 'rgba(254, 240, 138, 0.65)',
+          },
+          {
+            id: 'a2-sum',
+            type: 'text',
+            text: `🎯 Resumen del documento: ${rawLines[0]?.slice(0, 78) || cleanQuery}`,
+            x: 75,
+            y: 422,
+            size: 16,
+            color: '#0f172a',
+            style: 'bold',
+          },
+        ],
+      },
+    ];
+
+    return {
+      id: 'lesson-att-' + Date.now(),
+      title: cleanQuery,
+      topic: 'Apuntes Subidos',
+      category: 'General',
+      mode,
+      teacherId,
+      description: `Clase generada a partir de tus apuntes sobre ${cleanQuery}`,
+      steps,
+      flashcards: [
+        {
+          id: 'fc-att-1',
+          front: `Idea principal de "${cleanQuery}"`,
+          back: rawLines[0] || 'Revisa el esquema central dibujado en la pizarra.',
+        },
+      ],
+      quiz: [
+        {
+          id: 'qz-att-1',
+          question: `¿Qué punto aparece destacado en tus apuntes sobre "${cleanQuery}"?`,
+          options: [
+            rawLines[0]?.slice(0, 75) || 'Concepto principal del texto',
+            'Ninguna de las anteriores',
+          ],
+          correctIndex: 0,
+          explanation: 'Extraído directamente de los apuntes proporcionados.',
+        },
+      ],
+    };
+  }
 
   // Check if topic matches our rich knowledge base
   const matched = TOPIC_KNOWLEDGE_BASE.find(tk =>

@@ -162,6 +162,31 @@ class SpeechService {
     };
   }
 
+  public unlockAudio() {
+    if (typeof window === 'undefined') return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0.001; // silent unlock
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(0);
+        osc.stop(audioCtx.currentTime + 0.05);
+      }
+    } catch {}
+    if (this.synth) {
+      try {
+        this.synth.resume();
+      } catch {}
+    }
+  }
+
   public testAudioSound(onDone?: () => void) {
     if (typeof window === 'undefined') return;
     try {

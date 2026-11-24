@@ -857,32 +857,31 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       {/* Whiteboard Interactive Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         {/* Student Drawing Controls */}
-        <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl shadow-md">
+        <div className="flex items-center gap-1.5 bg-white border border-slate-200 p-1.5 rounded-2xl shadow-xs">
           <button
             onClick={() => setIsDrawModeActive(!isDrawModeActive)}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
               isDrawModeActive
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
             }`}
             title="Activar o desactivar tu propio rotulador para escribir o hacer anotaciones en la pizarra"
           >
             <PenTool className="w-3.5 h-3.5" />
-            <span>{isDrawModeActive ? 'Modo Dibujo: ACTIVO' : '✏️ Dibujar tú en la pizarra'}</span>
+            <span>{isDrawModeActive ? 'Modo Dibujo: ACTIVO' : '✏️ Dibujar tú'}</span>
           </button>
 
           {isDrawModeActive && (
             <>
-              {/* Color options */}
-              <div className="flex items-center gap-1 px-1 border-l border-slate-700">
+              <div className="flex items-center gap-1.5 px-2 border-l border-slate-200">
                 <button
                   onClick={() => {
                     setUserColor('#2563eb');
                     setIsEraser(false);
                     setUserStrokeWidth(3);
                   }}
-                  className={`w-6 h-6 rounded-full bg-blue-600 transition-transform ${
-                    userColor === '#2563eb' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  className={`w-5 h-5 rounded-full bg-blue-600 transition-transform ${
+                    userColor === '#2563eb' && !isEraser ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : 'opacity-80'
                   }`}
                   title="Rotulador Azul"
                 />
@@ -892,8 +891,8 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
                     setIsEraser(false);
                     setUserStrokeWidth(3);
                   }}
-                  className={`w-6 h-6 rounded-full bg-red-600 transition-transform ${
-                    userColor === '#dc2626' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  className={`w-5 h-5 rounded-full bg-red-600 transition-transform ${
+                    userColor === '#dc2626' && !isEraser ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : 'opacity-80'
                   }`}
                   title="Rotulador Rojo"
                 />
@@ -903,8 +902,8 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
                     setIsEraser(false);
                     setUserStrokeWidth(3);
                   }}
-                  className={`w-6 h-6 rounded-full bg-slate-900 border border-slate-600 transition-transform ${
-                    userColor === '#0f172a' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  className={`w-5 h-5 rounded-full bg-slate-900 transition-transform ${
+                    userColor === '#0f172a' && !isEraser ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : 'opacity-80'
                   }`}
                   title="Rotulador Negro"
                 />
@@ -914,28 +913,28 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
                     setIsEraser(false);
                     setUserStrokeWidth(3);
                   }}
-                  className={`w-6 h-6 rounded-full bg-emerald-600 transition-transform ${
-                    userColor === '#059669' && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  className={`w-5 h-5 rounded-full bg-emerald-600 transition-transform ${
+                    userColor === '#059669' && !isEraser ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : 'opacity-80'
                   }`}
                   title="Rotulador Verde"
                 />
                 <button
                   onClick={() => {
-                    setUserColor('rgba(250, 204, 21, 0.4)');
+                    setUserColor('rgba(250, 204, 21, 0.45)');
                     setIsEraser(false);
                     setUserStrokeWidth(16);
                   }}
-                  className={`w-6 h-6 rounded-full bg-yellow-400 transition-transform ${
-                    userColor.includes('250, 204, 21') && !isEraser ? 'ring-2 ring-white scale-110' : 'opacity-80'
+                  className={`w-5 h-5 rounded-full bg-yellow-400 transition-transform ${
+                    userColor.includes('250, 204, 21') && !isEraser ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : 'opacity-80'
                   }`}
-                  title="Subrayador Fluorescente"
+                  title="Subrayador"
                 />
                 <button
                   onClick={() => setIsEraser(true)}
                   className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
-                    isEraser ? 'bg-amber-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                    isEraser ? 'bg-amber-500 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                   }`}
-                  title="Borrador de notas"
+                  title="Goma de borrar"
                 >
                   <Eraser className="w-3 h-3" />
                   <span>Goma</span>
@@ -945,11 +944,10 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
               {userStrokes.length > 0 && (
                 <button
                   onClick={clearStudentNotes}
-                  className="px-2 py-1 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-                  title="Borrar únicamente tus anotaciones"
+                  className="px-2 py-1 rounded-lg text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
                 >
                   <RotateCcw className="w-3 h-3 inline mr-1" />
-                  Limpiar mis notas
+                  Limpiar
                 </button>
               )}
             </>
@@ -961,21 +959,21 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           {isAnimatingStroke && (
             <button
               onClick={renderAllCommandsInstant}
-              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1 transition-colors"
+              className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold flex items-center gap-1 transition-colors"
               title="Mostrar todo el contenido de la pizarra de inmediato"
             >
               <FastForward className="w-3.5 h-3.5" />
-              <span>Ver Todo (Saltar Trazo)</span>
+              <span>Ver Todo</span>
             </button>
           )}
 
           <button
             onClick={handleDownloadBoard}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 flex items-center gap-1.5 shadow-xs transition-colors"
             title="Guardar captura de la pizarra completa en PNG"
           >
-            <Download className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">Descargar Pizarra</span>
+            <Download className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline">Guardar Apuntes</span>
           </button>
         </div>
       </div>
