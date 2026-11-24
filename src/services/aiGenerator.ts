@@ -15,15 +15,70 @@ export interface InterruptionResponse {
 }
 
 export async function generateInteractiveLesson(req: GenerationRequest): Promise<Lesson> {
-  if (req.apiKey && req.apiKey.trim().length > 8) {
-    try {
-      return await callLlmWithStructuredOutput(req);
-    } catch (e) {
-      console.warn('Fallo llamada a API remota, usando motor pedagógico offline:', e);
-    }
+  // Always try live AI first: user's API key if provided, otherwise free Pollinations AI!
+  try {
+    return await callLlmWithStructuredOutput(req);
+  } catch (e) {
+    console.warn('Fallo llamada a IA en vivo, usando motor local:', e);
   }
 
   return createUniversalLessonFromTopic(req.query, req.mode, req.teacherId, req.attachmentText);
+}
+
+function extractCleanJson(raw: string): any {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    cleaned = cleaned.slice(start, end + 1);
+  }
+  return JSON.parse(cleaned);
+}
+
+function sanitizeCommands(cmds: any[]): BoardCommand[] {
+  if (!Array.isArray(cmds)) return [];
+  const validTypes = new Set(['clear', 'title', 'text', 'curve', 'circle', 'arrow', 'highlight', 'box', 'diagram', 'graph', 'math']);
+  return cmds
+    .filter(c => c && typeof c === 'object')
+    .map((c, idx) => {
+      const id = c.id || `cmd-${Date.now()}-${idx}`;
+      const type = validTypes.has(c.type) ? c.type : 'text';
+      if (type === 'text') {
+        return {
+          id,
+          type: 'text',
+          text: String(c.text || c.label || ''),
+          x: typeof c.x === 'number' ? Math.max(30, Math.min(880, c.x)) : 60,
+          y: typeof c.y === 'number' ? Math.max(50, Math.min(540, c.y)) : 140 + idx * 35,
+          size: typeof c.size === 'number' ? c.size : 17,
+          color: c.color || '#0f172a',
+          style: c.style || 'bold',
+        } as BoardCommand;
+      }
+      if (type === 'curve') {
+        const pts = Array.isArray(c.points) && c.points.length >= 2 ? c.points : [[100, 300], [300, 200], [500, 300]];
+        return { ...c, id, type: 'curve', points: pts, color: c.color || '#2563eb' } as BoardCommand;
+      }
+      if (type === 'arrow') {
+        const from = Array.isArray(c.from) && c.from.length === 2 ? c.from : [100, 200];
+        const to = Array.isArray(c.to) && c.to.length === 2 ? c.to : [260, 200];
+        return { ...c, id, type: 'arrow', from, to, color: c.color || '#dc2626' } as BoardCommand;
+      }
+      if (type === 'circle') {
+        return {
+          ...c,
+          id,
+          type: 'circle',
+          x: typeof c.x === 'number' ? c.x : 300,
+          y: typeof c.y === 'number' ? c.y : 220,
+          radiusX: typeof c.radiusX === 'number' ? c.radiusX : 45,
+          color: c.color || '#2563eb',
+        } as BoardCommand;
+      }
+      return { ...c, id, type } as BoardCommand;
+    });
 }
 
 export async function answerStudentInterruption(params: {
@@ -36,14 +91,14 @@ export async function answerStudentInterruption(params: {
 }): Promise<InterruptionResponse> {
   const { question, lessonTitle, currentStepTitle, currentSpeech, apiKey, provider } = params;
 
-  if (apiKey && apiKey.trim().length > 8) {
-    try {
-      const prompt = `Eres ahaboard, un tutor que DIBUJA en una pizarra blanca (coordenadas 0..1000 x 0..580).
+  try {
+    const prompt = `Eres ahaboard, un tutor que explica y DIBUJA en una pizarra blanca (coordenadas 0..1000 x 0..580).
 Estabas explicando "${lessonTitle}" (paso: "${currentStepTitle}", decías: "${currentSpeech}").
-El estudiante te ha interrumpido con: "${question}".
+El estudiante te dice o pregunta: "${question}".
 
-Responde de tú a tú, claro y cercano, y DIBUJA en la zona inferior (y entre 370 y 530) usando flechas ("arrow"), círculos ("circle"), curvas ("curve") y anotaciones cortas ("text") sin borrar lo anterior. No uses cajas rectangulares aburridas.
-Devuelve ÚNICAMENTE JSON válido:
+Responde de tú a tú en español, claro, amable y directo a lo que te acaba de preguntar.
+Además DIBUJA en la zona inferior (y entre 370 y 530) usando flechas ("arrow"), círculos ("circle"), curvas ("curve") y anotaciones cortas ("text") sin borrar lo anterior.
+Devuelve ÚNICAMENTE JSON válido sin markdown:
 {
   "speech": "Texto que dirás en voz alta respondiendo directamente al estudiante",
   "commands": [
@@ -52,103 +107,90 @@ Devuelve ÚNICAMENTE JSON válido:
   ]
 }`;
 
-      const raw = await callRawJsonLlm(prompt, apiKey, provider || 'gemini');
-      const parsed = JSON.parse(raw);
-      return {
-        speech: parsed.speech || 'Buena pregunta. Te lo dibujo aquí mismo en la pizarra.',
-        commands: Array.isArray(parsed.commands) ? parsed.commands : [],
-      };
-    } catch (e) {
-      console.warn('Error en interrupción con LLM, usando respuesta local:', e);
-    }
+    const raw = await callRawJsonLlm(prompt, apiKey || '', provider || 'gemini');
+    const parsed = extractCleanJson(raw);
+    return {
+      speech: parsed.speech || 'Buena pregunta. Te lo dibujo aquí mismo en la pizarra.',
+      commands: sanitizeCommands(parsed.commands),
+    };
+  } catch (e) {
+    console.warn('Error en interrupción con LLM, usando respuesta local:', e);
   }
 
-  // Smart local fallback for interruptions (draws arrow + circle + handwritten note)
-  const lowerQ = question.toLowerCase();
-  let replySpeech = `¡Buena pregunta! Para responderte sobre "${question}" con total libertad y dibujarte esquemas nuevos a medida, conecta tu clave gratuita de Gemini arriba en "Conectar IA". Mientras tanto, quédate con esta flecha clave en morado.`;
-  if (lowerQ.includes('a la vez') || lowerQ.includes('mismo tiempo') || lowerQ.includes('iguales')) {
-    replySpeech = `¡Exacto! Llegan exactamente a la vez porque la gravedad tira hacia abajo con la misma aceleración para las dos.`;
-  }
-
+  const replySpeech = `Sobre "${question}": fíjate en esta anotación en la pizarra para conectarlo con ${lessonTitle}.`;
   return {
     speech: replySpeech,
     commands: [
-      {
-        id: 'int-arrow-' + Date.now(),
-        type: 'arrow',
-        from: [70, 420],
-        to: [160, 470],
-        color: '#7c3aed',
-        label: 'Mira aquí',
-      },
-      {
-        id: 'int-circle-' + Date.now(),
-        type: 'circle',
-        x: 520,
-        y: 470,
-        radiusX: 340,
-        radiusY: 32,
-        color: '#7c3aed',
-      },
-      {
-        id: 'int-txt-' + Date.now(),
-        type: 'text',
-        text: `${replySpeech.slice(0, 78)}${replySpeech.length > 78 ? '...' : ''}`,
-        x: 200,
-        y: 476,
-        size: 16,
-        color: '#4c1d95',
-        style: 'bold',
-      },
+      { id: 'int-arrow-' + Date.now(), type: 'arrow', from: [70, 420], to: [160, 470], color: '#7c3aed', label: 'Nota' },
+      { id: 'int-txt-' + Date.now(), type: 'text', text: replySpeech.slice(0, 82), x: 185, y: 476, size: 16, color: '#4c1d95', style: 'bold' },
     ],
   };
 }
 
 async function callRawJsonLlm(prompt: string, apiKey: string, provider: AIProvider): Promise<string> {
-  if (provider === 'gemini') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-    const res = await fetch(url, {
+  // If user configured their own API Key, use it
+  if (apiKey && apiKey.trim().length > 8) {
+    if (provider === 'gemini') {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.6,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
+      const data = await res.json();
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    }
+
+    const endpoint =
+      provider === 'groq'
+        ? 'https://api.groq.com/openai/v1/chat/completions'
+        : 'https://api.openai.com/v1/chat/completions';
+    const model = provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
+
+    const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.6,
-        },
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0.6,
       }),
     });
-    if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
   }
 
-  const endpoint =
-    provider === 'groq'
-      ? 'https://api.groq.com/openai/v1/chat/completions'
-      : 'https://api.openai.com/v1/chat/completions';
-  const model = provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
-
-  const response = await fetch(endpoint, {
+  // Default: Free Pollinations AI endpoint (no API key required, CORS enabled)
+  const response = await fetch('https://text.pollinations.ai/', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey.trim()}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model,
       messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' },
-      temperature: 0.6,
+      model: 'openai',
+      jsonMode: true,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.statusText}`);
+    throw new Error(`Pollinations error: ${response.status}`);
   }
-
-  const data = await response.json();
-  return data.choices[0].message.content;
+  return await response.text();
 }
 
 async function callLlmWithStructuredOutput(req: GenerationRequest): Promise<Lesson> {
@@ -215,8 +257,22 @@ Reglas de coordenadas (1000x580):
 - Crea 2 o 3 pasos progresivos (en el paso 2 y 3 NO pongas "clear" para que se siga dibujando sobre la misma pizarra).
 Responde ÚNICAMENTE con el JSON válido.`;
 
-  const raw = await callRawJsonLlm(systemPrompt, req.apiKey!, req.provider || 'gemini');
-  const content = JSON.parse(raw);
+  const raw = await callRawJsonLlm(systemPrompt, req.apiKey || '', req.provider || 'gemini');
+  const content = extractCleanJson(raw);
+
+  const rawSteps = Array.isArray(content.steps) ? content.steps : [];
+  const safeSteps: LessonStep[] = rawSteps.map((s: any, idx: number) => ({
+    id: s.id || `step-${idx + 1}`,
+    title: s.title || `Paso ${idx + 1}`,
+    speech: s.speech || '',
+    commands: sanitizeCommands(s.commands),
+    socratic: s.socratic,
+    writingFocusCoord: s.writingFocusCoord,
+  }));
+
+  if (safeSteps.length === 0) {
+    throw new Error('La IA no devolvió pasos válidos');
+  }
 
   return {
     id: 'custom-' + Date.now(),
@@ -226,7 +282,7 @@ Responde ÚNICAMENTE con el JSON válido.`;
     mode: req.mode,
     teacherId: req.teacherId,
     description: `Explicación en pizarra blanca sobre ${req.query}`,
-    steps: content.steps || [],
+    steps: safeSteps,
     flashcards: content.flashcards || [],
     quiz: content.quiz || [],
   };
